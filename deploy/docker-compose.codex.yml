@@ -1,0 +1,94 @@
+name: open-design-codex
+
+x-open-design-codex-image: &open-design-codex-image
+  image: ${OPEN_DESIGN_CODEX_IMAGE:-open-design-codex:local}
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile.codex
+    args:
+      CODEX_VERSION: ${CODEX_VERSION:-latest}
+
+x-open-design-codex-env: &open-design-codex-env
+  HOME: /home/open-design
+  CODEX_HOME: /home/open-design/.codex
+  OPEN_DESIGN_UID: ${OPEN_DESIGN_UID:-1000}
+  OPEN_DESIGN_GID: ${OPEN_DESIGN_GID:-1000}
+  OD_CODEX_SANDBOX: ${OD_CODEX_SANDBOX:-danger-full-access}
+
+services:
+  open-design:
+    <<: *open-design-codex-image
+    container_name: open-design-codex
+    restart: always
+    environment:
+      <<: *open-design-codex-env
+      NODE_ENV: production
+      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=192}
+      OD_BIND_HOST: 127.0.0.1
+      OD_ALLOWED_ORIGINS: ${OPEN_DESIGN_ALLOWED_ORIGINS:-}
+      OD_PORT: 7456
+      OD_INTERNAL_PORT: 7457
+      OD_WEB_PORT: ${OPEN_DESIGN_PORT:-7456}
+    ports:
+      - "127.0.0.1:${OPEN_DESIGN_PORT:-7456}:7456"
+    volumes:
+      - open_design_data:/app/.od
+      - ${OPEN_DESIGN_PROJECTS_DIR:?Set OPEN_DESIGN_PROJECTS_DIR in deploy/.env}:/app/.od/projects
+      - codex_home:/home/open-design/.codex
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${OPEN_DESIGN_MEM_LIMIT:-512m}
+    pids_limit: 384
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:7456/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  codex-login:
+    <<: *open-design-codex-image
+    profiles:
+      - codex-auth
+    environment:
+      <<: *open-design-codex-env
+    volumes:
+      - codex_home:/home/open-design/.codex
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    stdin_open: true
+    tty: true
+    restart: "no"
+    command: ["codex", "login", "--device-auth"]
+
+  codex-status:
+    <<: *open-design-codex-image
+    profiles:
+      - codex-auth
+    environment:
+      <<: *open-design-codex-env
+    volumes:
+      - codex_home:/home/open-design/.codex
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+    command: ["codex", "login", "status"]
+
+volumes:
+  open_design_data:
+  codex_home:
