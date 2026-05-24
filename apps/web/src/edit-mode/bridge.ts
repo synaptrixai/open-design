@@ -50,6 +50,7 @@ export function buildManualEditBridge(enabled: boolean): string {
   var hostNodeSelector = ${JSON.stringify(MANUAL_EDIT_HOST_NODE_SELECTOR)};
   var sourcePathAttr = ${JSON.stringify(MANUAL_EDIT_SOURCE_PATH_ATTR)};
   var styleProps = ['fontFamily','fontSize','fontWeight','color','textAlign','lineHeight','letterSpacing','width','height','minHeight','gap','flexDirection','justifyContent','alignItems','backgroundColor','opacity','padding','paddingTop','paddingRight','paddingBottom','paddingLeft','margin','marginTop','marginRight','marginBottom','marginLeft','border','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderStyle','borderColor','borderRadius'];
+  var activeTextEdit = null;
   function isHostNode(el){
     return !!(el && el.matches && el.matches(hostNodeSelector));
   }
@@ -84,6 +85,9 @@ export function buildManualEditBridge(enabled: boolean): string {
     var tag = el.tagName ? el.tagName.toLowerCase() : '';
     return tag === 'a' || tag === 'button';
   }
+  function hasElementChildren(el){
+    return !!(el && el.children && el.children.length > 0);
+  }
   function inferKind(el){
     var explicit = el.getAttribute('data-od-edit');
     if (explicit) return explicit;
@@ -92,6 +96,10 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (tag === 'img') return 'image';
     if (['section','main','nav','div','article','header','footer'].indexOf(tag) >= 0) return 'container';
     return 'text';
+  }
+  function isDirectTextEditable(el){
+    var kind = inferKind(el);
+    return (kind === 'text' || kind === 'link') && !hasElementChildren(el);
   }
   function labelFor(el, id, kind){
     var explicit = el.getAttribute('data-od-label');
@@ -175,6 +183,58 @@ export function buildManualEditBridge(enabled: boolean): string {
     var el = findById(id);
     if (el) el.setAttribute('data-od-edit-selected', 'true');
   }
+  function selectTextContents(el){
+    try {
+      var range = document.createRange();
+      range.selectNodeContents(el);
+      var selection = window.getSelection && window.getSelection();
+      if (!selection) return;
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch (_) {}
+  }
+  function clearInlineTextEdit(commit){
+    if (!activeTextEdit) return;
+    var edit = activeTextEdit;
+    activeTextEdit = null;
+    edit.el.removeAttribute('contenteditable');
+    edit.el.removeAttribute('spellcheck');
+    edit.el.removeAttribute('data-od-editing-text');
+    if (!commit) {
+      edit.el.textContent = edit.originalText;
+      return;
+    }
+    var value = edit.el.textContent || '';
+    if (value === edit.originalText) return;
+    var target = targetFrom(edit.el, true);
+    var message = {
+      type: 'od-edit-text-commit',
+      id: edit.id,
+      value: value,
+      target: target
+    };
+    if (target.kind === 'link') message.href = edit.el.getAttribute('href') || '';
+    window.parent.postMessage(message, '*');
+  }
+  function beginInlineTextEdit(el){
+    if (!isDirectTextEditable(el)) return;
+    if (activeTextEdit && activeTextEdit.el === el) return;
+    clearInlineTextEdit(true);
+    var id = stableId(el);
+    activeTextEdit = { el: el, id: id, originalText: el.textContent || '' };
+    setSelectedTarget(id);
+    el.setAttribute('contenteditable', 'plaintext-only');
+    el.setAttribute('spellcheck', 'true');
+    el.setAttribute('data-od-editing-text', 'true');
+    setTimeout(function(){
+      try {
+        el.focus({ preventScroll: true });
+      } catch (_) {
+        el.focus();
+      }
+      selectTextContents(el);
+    }, 0);
+  }
   function closestTarget(event){
     var el = event.target;
     var fallback = null;
@@ -235,11 +295,15 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (ev.data.type === 'od-edit-mode') {
       enabled = !!ev.data.enabled;
       document.documentElement.toggleAttribute('data-od-edit-mode', enabled);
-      if (!enabled) clearSelectedTarget();
+      if (!enabled) {
+        clearInlineTextEdit(false);
+        clearSelectedTarget();
+      }
       if (enabled) setTimeout(postTargets, 0);
       return;
     }
     if (ev.data.type === 'od-edit-selected-target') {
+      if (activeTextEdit && activeTextEdit.id !== (ev.data.id || null)) clearInlineTextEdit(true);
       setSelectedTarget(ev.data.id || null);
       return;
     }
@@ -252,9 +316,33 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (!enabled) return;
     var el = closestTarget(ev);
     if (!el) return;
+    if (activeTextEdit && activeTextEdit.el === el) {
+      ev.stopPropagation();
+      return;
+    }
+    if (activeTextEdit) clearInlineTextEdit(true);
     ev.preventDefault();
     ev.stopPropagation();
     window.parent.postMessage({ type: 'od-edit-select', target: targetFrom(el, true) }, '*');
+    beginInlineTextEdit(el);
+  }, true);
+  document.addEventListener('keydown', function(ev){
+    if (!activeTextEdit) return;
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      clearInlineTextEdit(false);
+      return;
+    }
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      clearInlineTextEdit(true);
+    }
+  }, true);
+  document.addEventListener('blur', function(ev){
+    if (!activeTextEdit || ev.target !== activeTextEdit.el) return;
+    clearInlineTextEdit(true);
   }, true);
   window.addEventListener('resize', postTargets);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', postTargets);
@@ -274,6 +362,10 @@ html[data-od-edit-mode] [data-od-edit-selected] {
   outline: 2px solid #2563eb !important;
   outline-offset: 4px;
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.16);
+}
+html[data-od-edit-mode] [data-od-editing-text] {
+  cursor: text !important;
+  user-select: text;
 }
 </style>`;
 }

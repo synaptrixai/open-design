@@ -143,4 +143,14 @@ describe('manual edit bridge target normalization', () => {
     expect(bridge).toContain('isLayoutContainer: isLayoutContainer(el)');
     expect(bridge).toContain("display.indexOf('flex') >= 0 || display.indexOf('grid') >= 0");
   });
+
+  it('supports inline text editing through the manual edit bridge', () => {
+    const bridge = buildManualEditBridge(true);
+
+    expect(bridge).toContain("type: 'od-edit-text-commit'");
+    expect(bridge).toContain("el.setAttribute('contenteditable', 'plaintext-only')");
+    expect(bridge).toContain("ev.key === 'Enter' && !ev.shiftKey");
+    expect(bridge).toContain("ev.key === 'Escape'");
+    expect(bridge).toContain('[data-od-editing-text]');
+  });
 });

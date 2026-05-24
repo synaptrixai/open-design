@@ -4810,6 +4810,26 @@ function HtmlViewer({
         void selectManualEditTarget(data.target);
         return;
       }
+      if (data.type === 'od-edit-text-commit') {
+        if (!data.id || typeof data.value !== 'string') return;
+        if (data.target) {
+          setSelectedManualEditTarget(data.target);
+          setManualEditDraft((current) => ({
+            ...current,
+            text: data.value,
+            href: typeof data.href === 'string' ? data.href : current.href,
+            outerHtml: data.target?.outerHtml || current.outerHtml,
+          }));
+        } else {
+          setManualEditDraft((current) => ({ ...current, text: data.value }));
+        }
+        const label = data.target?.label || selectedManualEditTargetIdRef.current || data.id;
+        const patch: ManualEditPatch = typeof data.href === 'string'
+          ? { id: data.id, kind: 'set-link', text: data.value, href: data.href }
+          : { id: data.id, kind: 'set-text', value: data.value };
+        void applyManualEdit(patch, `Content: ${label}`);
+        return;
+      }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
