@@ -4211,10 +4211,14 @@ function HtmlViewer({
     }) : ''),
     [previewSource, effectiveDeck, projectId, file.name, previewStateKey, manualEditMode, selectedPalette],
   );
-  const lazySrcDocTransport = useMemo(() => buildLazySrcdocTransport(), []);
+  const lazySrcDocTransport = useMemo(
+    () => buildLazySrcdocTransport(useUrlLoadPreview ? undefined : srcDoc),
+    [srcDoc, useUrlLoadPreview],
+  );
   const [hasLazySrcDocTransport, setHasLazySrcDocTransport] = useState(useUrlLoadPreview);
   const [srcDocTransportResetKey, setSrcDocTransportResetKey] = useState(0);
   const [srcDocShellReady, setSrcDocShellReady] = useState(false);
+  const srcDocTransportResetSeenRef = useRef(false);
   const wasUrlLoadPreviewRef = useRef(useUrlLoadPreview);
   useEffect(() => {
     if (useUrlLoadPreview) setHasLazySrcDocTransport(true);
@@ -4223,6 +4227,10 @@ function HtmlViewer({
   // next shell will post `od:srcdoc-transport-ready` (or fire onLoad) and
   // flip this back to true. See #2253.
   useEffect(() => {
+    if (!srcDocTransportResetSeenRef.current) {
+      srcDocTransportResetSeenRef.current = true;
+      return;
+    }
     setSrcDocShellReady(false);
   }, [srcDocTransportResetKey]);
   // Listen for the shell's ready handshake. Gating activation on this is
@@ -4824,7 +4832,9 @@ function HtmlViewer({
           setManualEditDraft((current) => ({ ...current, text: data.value }));
         }
         const label = data.target?.label || selectedManualEditTargetIdRef.current || data.id;
-        const patch: ManualEditPatch = typeof data.href === 'string'
+        const patch: ManualEditPatch = data.useOuterHtml && typeof data.html === 'string'
+          ? { id: data.id, kind: 'set-outer-html', html: data.html }
+          : typeof data.href === 'string'
           ? { id: data.id, kind: 'set-link', text: data.value, href: data.href }
           : { id: data.id, kind: 'set-text', value: data.value };
         void applyManualEdit(patch, `Content: ${label}`);

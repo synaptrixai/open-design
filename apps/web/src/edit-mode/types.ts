@@ -109,6 +109,8 @@ export interface ManualEditTextCommitMessage {
   id: string;
   value: string;
   href?: string;
+  html?: string;
+  useOuterHtml?: boolean;
   target?: ManualEditTarget;
 }
 

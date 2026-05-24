@@ -149,8 +149,78 @@ describe('manual edit bridge target normalization', () => {
 
     expect(bridge).toContain("type: 'od-edit-text-commit'");
     expect(bridge).toContain("el.setAttribute('contenteditable', 'plaintext-only')");
+    expect(bridge).toContain("explicit === 'text' || explicit === 'link' || explicit === 'image' || explicit === 'container'");
+    expect(bridge).toContain('useOuterHtml: hasElementChildren(el)');
+    expect(bridge).toContain('if (isDirectTextEditable(el)) return el;');
+    expect(bridge).toContain('setOverlayNeutralized(enabled)');
+    expect(bridge).toContain("computed.position !== 'sticky' && computed.position !== 'fixed'");
+    expect(bridge).toContain('new MutationObserver(function(){ scheduleInlineTextEditRestore(); })');
+    expect(bridge).toContain('scheduleInlineTextEditRestores(id, activeTextEdit)');
+    expect(bridge).toContain('[50, 250, 750].forEach');
+    expect(bridge).toContain("document.addEventListener('pointerdown', handleManualEditPick, true)");
+    expect(bridge).toContain("document.addEventListener('mousedown', handleManualEditPick, true)");
+    expect(bridge).toContain('makeInlineTextEditable(el, id)');
     expect(bridge).toContain("ev.key === 'Enter' && !ev.shiftKey");
     expect(bridge).toContain("ev.key === 'Escape'");
     expect(bridge).toContain('[data-od-editing-text]');
+  });
+
+  it('treats unknown data-od-edit values as text-editable by tag inference', () => {
+    const dom = new JSDOM(
+      `<main>
+        <h1 data-od-id="title" data-od-edit="typography">Title</h1>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const title = dom.window.document.querySelector('[data-od-id="title"]')!;
+
+    title.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(title.getAttribute('data-od-edit-selected')).toBe('true');
+    expect(title.getAttribute('contenteditable')).toBe('plaintext-only');
+    expect(title.getAttribute('data-od-editing-text')).toBe('true');
+
+    dom.window.close();
+  });
+
+  it('keeps inline text editing active across stale null selected-target syncs', () => {
+    const dom = new JSDOM(
+      `<main>
+        <h1 data-od-id="title">Title</h1>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const title = dom.window.document.querySelector('[data-od-id="title"]')!;
+
+    title.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-selected-target', id: null },
+    }));
+
+    expect(title.getAttribute('contenteditable')).toBe('plaintext-only');
+    expect(title.getAttribute('data-od-edit-selected')).toBe('true');
+
+    dom.window.close();
+  });
+
+  it('restores inline text editing if the editable marker is stripped after selection', async () => {
+    const dom = new JSDOM(
+      `<main>
+        <h1 data-od-id="title">Title</h1>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const title = dom.window.document.querySelector('[data-od-id="title"]')!;
+
+    title.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    title.removeAttribute('contenteditable');
+    title.removeAttribute('data-od-editing-text');
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    expect(title.getAttribute('contenteditable')).toBe('plaintext-only');
+    expect(title.getAttribute('data-od-editing-text')).toBe('true');
+
+    dom.window.close();
   });
 });
