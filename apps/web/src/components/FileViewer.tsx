@@ -131,10 +131,6 @@ type ManualEditPendingContentSave = {
   patch: ManualEditPatch;
   label: string;
 };
-type ManualEditPendingContentSave = {
-  patch: ManualEditPatch;
-  label: string;
-};
 type PreviewViewportId = 'desktop' | 'tablet' | 'mobile';
 type PreviewCanvasSize = { width: number; height: number };
 type PreviewViewportPreset = {
@@ -4440,8 +4436,13 @@ function HtmlViewer({
     win.postMessage({ type: 'od-edit-preview-style', id, styles, version }, '*');
     return true;
   }, []);
+  const logManualEditDebug = (_event: string, _detail: Record<string, unknown> = {}) => {};
 
-  function postSelectedManualEditTargetToIframe(id: string | null, target: HTMLIFrameElement | null = iframeRef.current) {
+  function postSelectedManualEditTargetToIframe(
+    id: string | null,
+    target: HTMLIFrameElement | null = iframeRef.current,
+    focus = false,
+  ) {
     const win = target?.contentWindow;
     if (!win) return;
     if (id && focus) {
@@ -4869,10 +4870,6 @@ function HtmlViewer({
       if (!isOurPreviewIframeSource(ev.source)) return;
       const data = ev.data as ManualEditBridgeMessage | null;
       if (!data?.type) return;
-      if (data.type === 'od-edit-debug') {
-        logManualEditDebug(data.event ?? 'bridge:unknown', data.detail ?? {});
-        return;
-      }
       if (data.type === 'od-edit-targets' && Array.isArray(data.targets)) {
         logManualEditDebug('host:targets', {
           count: data.targets.length,
