@@ -4914,8 +4914,8 @@ function HtmlViewer({
         void selectManualEditTarget(data.target);
         return;
       }
-      if (data.type === 'od-edit-text-commit') {
-        if (!data.id || typeof data.value !== 'string') return;
+	      if (data.type === 'od-edit-text-commit') {
+	        if (!data.id || typeof data.value !== 'string') return;
         logManualEditDebug('host:text-commit-message', {
           id: data.id,
           value: data.value,
@@ -4943,13 +4943,18 @@ function HtmlViewer({
           ? { id: data.id, kind: 'set-link', text: data.value, href: data.href }
           : { id: data.id, kind: 'set-text', value: data.value };
         logManualEditDebug('host:text-commit-patch', { patch, label: `Content: ${label}` });
-        scheduleManualEditContentSave(patch, `Content: ${label}`);
-        return;
-      }
-    }
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [isOurPreviewIframeSource, manualEditMode, source]);
+	        scheduleManualEditContentSave(patch, `Content: ${label}`);
+	        return;
+	      }
+	      if (data.type === 'od-edit-history-key') {
+	        logManualEditDebug('host:history-key-message', { action: data.action });
+	        void handleManualEditHistoryShortcut(data.action);
+	        return;
+	      }
+	    }
+	    window.addEventListener('message', onMessage);
+	    return () => window.removeEventListener('message', onMessage);
+	  }, [isOurPreviewIframeSource, manualEditMode, source]);
 
   function nextManualEditPreviewVersion(): number {
     manualEditPreviewVersionRef.current += 1;
@@ -5199,7 +5204,7 @@ function HtmlViewer({
     return false;
   }
 
-  async function undoManualEdit() {
+	  async function undoManualEdit() {
     if (manualEditSavingRef.current) return;
     const [latest, ...rest] = manualEditHistory;
     if (!latest) return;
@@ -5229,9 +5234,18 @@ function HtmlViewer({
       manualEditSavingRef.current = false;
       setManualEditSaving(false);
     }
-  }
+	  }
 
-  async function redoManualEdit() {
+	  async function handleManualEditHistoryShortcut(action: 'undo' | 'redo') {
+	    const contentFlushed = await flushManualEditContentSave();
+	    if (!contentFlushed) return;
+	    const styleFlushed = await flushManualEditStyleSave();
+	    if (!styleFlushed) return;
+	    if (action === 'undo') await undoManualEdit();
+	    else await redoManualEdit();
+	  }
+
+	  async function redoManualEdit() {
     if (manualEditSavingRef.current) return;
     const [latest, ...rest] = manualEditUndone;
     if (!latest) return;

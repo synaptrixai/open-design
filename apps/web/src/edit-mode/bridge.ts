@@ -450,6 +450,20 @@ export function buildManualEditBridge(enabled: boolean): string {
     debug('bridge:key-applied', { id: activeTextEdit.id, key: ev.key, value: next });
     return true;
   }
+  function handleInlineTextHistoryShortcut(ev){
+    if (!enabled || !(ev.metaKey || ev.ctrlKey) || ev.altKey) return false;
+    var key = ev.key ? String(ev.key).toLowerCase() : '';
+    var action = null;
+    if (key === 'z') action = ev.shiftKey ? 'redo' : 'undo';
+    else if (key === 'y') action = 'redo';
+    if (!action) return false;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (activeTextEdit) postInlineTextCommit(activeTextEdit);
+    debug('bridge:history-key', { action: action, key: ev.key, shiftKey: !!ev.shiftKey });
+    window.parent.postMessage({ type: 'od-edit-history-key', action: action }, '*');
+    return true;
+  }
   function replaceSelectionOrAppendText(el, text){
     if (!activeTextEdit) return false;
     var current = activeTextEdit.pendingReplaceOnType ? '' : (el.textContent || '');
@@ -719,6 +733,7 @@ export function buildManualEditBridge(enabled: boolean): string {
     noteInlineTextInput(ev.target);
   }, true);
   document.addEventListener('keydown', function(ev){
+    if (handleInlineTextHistoryShortcut(ev)) return;
     if (!activeTextEdit) return;
     debug('bridge:keydown', { key: ev.key, targetTag: ev.target && ev.target.tagName ? ev.target.tagName.toLowerCase() : null });
     if (applyInlineTextKeyboardInput(ev)) return;

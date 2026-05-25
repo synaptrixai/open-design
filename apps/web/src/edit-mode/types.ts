@@ -114,11 +114,17 @@ export interface ManualEditTextCommitMessage {
   target?: ManualEditTarget;
 }
 
+export interface ManualEditHistoryKeyMessage {
+  type: 'od-edit-history-key';
+  action: 'undo' | 'redo';
+}
+
 export type ManualEditBridgeMessage =
   | ManualEditTargetMessage
   | ManualEditSelectMessage
   | ManualEditPreviewAppliedMessage
-  | ManualEditTextCommitMessage;
+  | ManualEditTextCommitMessage
+  | ManualEditHistoryKeyMessage;
 
 export const MANUAL_EDIT_STYLE_PROPS: readonly (keyof ManualEditStyles)[] = [
   'fontFamily', 'fontSize', 'fontWeight', 'color', 'textAlign', 'lineHeight', 'letterSpacing',

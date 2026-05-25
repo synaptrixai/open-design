@@ -164,6 +164,8 @@ describe('manual edit bridge target normalization', () => {
     expect(bridge).toContain('pendingReplaceOnType: true');
     expect(bridge).toContain('applyInlineTextKeyboardInput(ev)');
     expect(bridge).toContain("ev.data.type === 'od-edit-key'");
+    expect(bridge).toContain("type: 'od-edit-history-key'");
+    expect(bridge).toContain('handleInlineTextHistoryShortcut(ev)');
     expect(bridge).toContain('document.activeElement === el');
     expect(bridge).toContain('!activeTextEdit.focusSelectionApplied');
     expect(bridge).toContain('setSelectedTarget(selectedId, false)');
