@@ -57,19 +57,8 @@ export function buildManualEditBridge(enabled: boolean): string {
   var restoringInlineText = false;
   var lastTargetsJson = '';
   function debug(event, detail){
-    try {
-      window.parent.postMessage({
-        type: 'od-edit-debug',
-        event: event,
-        detail: Object.assign({
-          enabled: enabled,
-          bridgeVersion: bridgeVersion,
-          activeTag: document.activeElement && document.activeElement.tagName ? document.activeElement.tagName.toLowerCase() : null,
-          hasFocus: document.hasFocus ? document.hasFocus() : null,
-          activeEditId: activeTextEdit ? activeTextEdit.id : null
-        }, detail || {})
-      }, '*');
-    } catch (_) {}
+    void event;
+    void detail;
   }
   function isHostNode(el){
     return !!(el && el.matches && el.matches(hostNodeSelector));
@@ -147,12 +136,31 @@ export function buildManualEditBridge(enabled: boolean): string {
   }
   function isLayoutContainer(el){
     var display = window.getComputedStyle(el).display || '';
-    return display.indexOf('flex') >= 0 || display.indexOf('grid') >= 0;
+    if (display.indexOf('flex') >= 0 || display.indexOf('grid') >= 0) return true;
+    return hasOwnDisplayHiddenState(el) && inferKind(el) === 'container';
+  }
+  function hasOwnDisplayHiddenState(el){
+    var computed = window.getComputedStyle(el);
+    return computed.display === 'none' || el.hasAttribute('hidden');
+  }
+  function hasHiddenAncestorDisplayState(el){
+    var node = el;
+    while (node && node !== document.documentElement) {
+      if (hasOwnDisplayHiddenState(node)) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+  function isHiddenTarget(el, rect){
+    var targetVisibility = window.getComputedStyle(el).visibility;
+    if (targetVisibility === 'hidden' || targetVisibility === 'collapse') return true;
+    return hasHiddenAncestorDisplayState(el);
   }
   function targetFrom(el, includeOuterHtml){
     var rect = el.getBoundingClientRect();
     var kind = inferKind(el);
     var id = stableId(el);
+    var hidden = isHiddenTarget(el, rect);
     var fields = {};
     if (kind === 'link') {
       fields.text = (el.textContent || '').trim();
@@ -175,6 +183,7 @@ export function buildManualEditBridge(enabled: boolean): string {
       attributes: attrsFor(el),
       styles: stylesFor(el),
       isLayoutContainer: isLayoutContainer(el),
+      isHidden: hidden,
       outerHtml: includeOuterHtml ? (el.outerHTML || '').replace(/\\sdata-od-runtime-id="[^"]*"/g, '').replace(/\\sdata-od-source-path="[^"]*"/g, '').replace(/\\sdata-od-edit-selected="[^"]*"/g, '').replace(/\\sdata-od-editing-text="[^"]*"/g, '').replace(/\\sdata-od-edit-position-override="[^"]*"/g, '') : ''
     };
   }
@@ -183,8 +192,8 @@ export function buildManualEditBridge(enabled: boolean): string {
     var targets = [];
     for (var i = 0; i < nodes.length; i++) {
       var rect = nodes[i].getBoundingClientRect();
-      if (rect.width < 4 || rect.height < 4) continue;
       if (!isSourceMappable(nodes[i])) continue;
+      if (!isHiddenTarget(nodes[i], rect) && (rect.width < 4 || rect.height < 4)) continue;
       targets.push(targetFrom(nodes[i], false));
     }
     return targets;

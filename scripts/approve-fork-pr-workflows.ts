@@ -6,6 +6,7 @@ type PullRequest = {
   draft?: boolean;
   changed_files: number;
   head: {
+    ref: string;
     sha: string;
     repo: { full_name: string } | null;
   };
@@ -26,6 +27,8 @@ type WorkflowRun = {
   id: number;
   name: string | null;
   event: string;
+  head_branch?: string | null;
+  head_repository?: { full_name: string } | null;
   status: string | null;
   conclusion: string | null;
   head_sha: string;
@@ -44,6 +47,7 @@ type WorkflowRunsResponse = {
 type ListPendingApprovalRunsDeps = {
   loadWorkflowRunsResponsePage?: (path: string) => Promise<WorkflowRunsResponse>;
   loadPullRequestsForHeadSha?: (repo: string, headSha: string) => Promise<PullRequest[]>;
+  loadPullRequestsForHeadRef?: (repo: string, headOwnerAndRef: string) => Promise<PullRequest[]>;
 };
 
 const dryRun = process.env.DRY_RUN === "true";
@@ -176,14 +180,31 @@ function isSamePullRequest(candidate: WorkflowRun["pull_requests"][number] | Pul
   );
 }
 
+function hasMatchingHeadIdentity(run: WorkflowRun, pull: PullRequest): boolean {
+  return (
+    run.head_sha === pull.head.sha &&
+    typeof run.head_branch === "string" &&
+    run.head_branch === pull.head.ref &&
+    run.head_repository?.full_name === pull.head.repo?.full_name
+  );
+}
+
 export function runTargetsPullRequest(
   run: WorkflowRun,
   pull: PullRequest,
   associatedPullsForHeadSha: PullRequest[],
+  associatedPullsForHeadRef: PullRequest[],
 ): boolean {
   if (run.pull_requests.length > 0) {
     if (run.pull_requests.length !== 1) return false;
     const [associatedPull] = run.pull_requests;
+    if (!associatedPull) return false;
+    return isSamePullRequest(associatedPull, pull);
+  }
+
+  if (associatedPullsForHeadSha.length === 0) {
+    if (!hasMatchingHeadIdentity(run, pull) || associatedPullsForHeadRef.length !== 1) return false;
+    const [associatedPull] = associatedPullsForHeadRef;
     if (!associatedPull) return false;
     return isSamePullRequest(associatedPull, pull);
   }
@@ -286,6 +307,10 @@ async function listPullRequestsForHeadSha(repo: string, headSha: string): Promis
   return githubPaginated<PullRequest>(`/repos/${repo}/commits/${headSha}/pulls`);
 }
 
+async function listPullRequestsForHeadRef(repo: string, headOwnerAndRef: string): Promise<PullRequest[]> {
+  return githubPaginated<PullRequest>(`/repos/${repo}/pulls?state=open&head=${encodeURIComponent(headOwnerAndRef)}`);
+}
+
 async function listWorkflowRunsForHeadSha(
   repo: string,
   headSha: string,
@@ -310,15 +335,33 @@ export async function listPendingApprovalRuns(
   const loadWorkflowRunsResponsePage = deps.loadWorkflowRunsResponsePage ?? ((path: string) => github<WorkflowRunsResponse>(path));
   const loadPullRequestsForHeadSha =
     deps.loadPullRequestsForHeadSha ?? ((currentRepo: string, headSha: string) => listPullRequestsForHeadSha(currentRepo, headSha));
+  const loadPullRequestsForHeadRef =
+    deps.loadPullRequestsForHeadRef ?? ((currentRepo: string, headOwnerAndRef: string) => listPullRequestsForHeadRef(currentRepo, headOwnerAndRef));
 
   const workflowRuns = await listWorkflowRunsForHeadSha(repo, pull.head.sha, loadWorkflowRunsResponsePage);
 
   const associatedPullsForHeadSha = (await loadPullRequestsForHeadSha(repo, pull.head.sha)).filter(
     (candidate) => candidate.state === "open",
   );
+  const associatedPullsForHeadRef =
+    associatedPullsForHeadSha.length === 0
+      ? await (async () => {
+          const headOwner = pull.head.repo?.full_name.split("/")[0];
+          const headOwnerAndRef = headOwner ? `${headOwner}:${pull.head.ref}` : null;
+          if (!headOwnerAndRef) return [];
+          return (await loadPullRequestsForHeadRef(repo, headOwnerAndRef)).filter(
+            (candidate) =>
+              candidate.state === "open" &&
+              candidate.head.sha === pull.head.sha &&
+              candidate.head.repo?.full_name === pull.head.repo?.full_name,
+          );
+        })()
+      : [];
 
   return workflowRuns.filter(
-    (run) => isPendingApprovalRun(run, pull) && runTargetsPullRequest(run, pull, associatedPullsForHeadSha),
+    (run) =>
+      isPendingApprovalRun(run, pull) &&
+      runTargetsPullRequest(run, pull, associatedPullsForHeadSha, associatedPullsForHeadRef),
   );
 }
 

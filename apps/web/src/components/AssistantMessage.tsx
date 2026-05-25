@@ -39,7 +39,11 @@ import type { PluginFolderAgentAction } from "./design-files/pluginFolderActions
 import { Icon } from "./Icon";
 import { useT } from "../i18n";
 import { deriveFileOps, type FileOpEntry } from "../runtime/file-ops";
-import { unfinishedTodosFromEvents, type TodoItem } from "../runtime/todos";
+import {
+  isTodoWriteToolName,
+  unfinishedTodosFromEvents,
+  type TodoItem,
+} from "../runtime/todos";
 import type { Dict } from "../i18n/types";
 import { agentDisplayName, exactAgentDisplayName } from "../utils/agentLabels";
 import {
@@ -1592,6 +1596,8 @@ const SNAPSHOT_TOOL_NAMES = new Set([
   "ask_user_question",
   "TodoWrite",
   "todowrite",
+  "todo_write",
+  "update_plan",
 ]);
 
 function dedupeSnapshotToolRetries(items: ToolItem[]): ToolItem[] {
@@ -1619,9 +1625,7 @@ function dedupeSnapshotToolRetries(items: ToolItem[]): ToolItem[] {
   // differ). We detect by checking whether all items share a TodoWrite
   // name after the input-key dedupe above.
   const collapsed = Array.from(lastByKey.values());
-  const allTodoWrite = collapsed.every(
-    (it) => it.use.name === "TodoWrite" || it.use.name === "todowrite",
-  );
+  const allTodoWrite = collapsed.every((it) => isTodoWriteToolName(it.use.name));
   if (allTodoWrite && collapsed.length > 1) {
     return [collapsed[collapsed.length - 1]!];
   }
@@ -1749,7 +1753,7 @@ function toolFamily(name: string): string {
   if (name === "Glob" || name === "list_files") return "glob";
   if (name === "Grep") return "grep";
   if (name === "Bash") return "bash";
-  if (name === "TodoWrite") return "todo";
+  if (isTodoWriteToolName(name)) return "todo";
   if (name === "WebFetch" || name === "web_fetch") return "fetch";
   if (name === "WebSearch" || name === "web_search") return "search";
   return name.toLowerCase();
@@ -1830,9 +1834,7 @@ type Block =
 function stripTodoToolGroups(blocks: Block[]): Block[] {
   return blocks.filter((block) => {
     if (block.kind !== "tool-group") return true;
-    return !block.items.every(
-      (it) => it.use.name === "TodoWrite" || it.use.name === "todowrite",
-    );
+    return !block.items.every((it) => isTodoWriteToolName(it.use.name));
   });
 }
 
