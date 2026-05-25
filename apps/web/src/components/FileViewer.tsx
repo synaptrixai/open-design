@@ -70,6 +70,7 @@ import { buildLazySrcdocTransport, buildSrcdoc, canActivateSrcDocTransport } fro
 import {
   hasTweaksTemplate,
   hasUrlModeBridge,
+  htmlNeedsFocusGuard,
   htmlNeedsSandboxShim,
   parseForceInline,
   shouldUrlLoadHtmlPreview,
@@ -125,6 +126,10 @@ export type ManualEditPendingStyleSave = {
   styles: Partial<ManualEditStyles>;
   label: string;
   version: number;
+};
+type ManualEditPendingContentSave = {
+  patch: ManualEditPatch;
+  label: string;
 };
 type ManualEditPendingContentSave = {
   patch: ManualEditPatch;
@@ -3727,6 +3732,13 @@ function HtmlViewer({
   const urlPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
   const srcDocPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
   const activatedSrcDocTransportHtmlRef = useRef<string | null>(null);
+  // Tracks the iframe DOM node whose dedupe ref was last reset by the
+  // srcDoc onLoad handler. We reset the dedupe exactly once per freshly
+  // mounted iframe (the first load is the shell HTML), and skip every
+  // subsequent load on the same node (those are our own
+  // document.open/write/close inside the shell). See onLoad below for
+  // the infinite-loop story (issue #2361).
+  const srcDocFrameDedupeResetForRef = useRef<HTMLIFrameElement | null>(null);
   const isActivePreviewIframeSource = useCallback((source: MessageEventSource | null) => {
     return !!source && source === iframeRef.current?.contentWindow;
   }, []);
@@ -4133,6 +4145,10 @@ function HtmlViewer({
     () => source != null && htmlNeedsSandboxShim(source),
     [source],
   );
+  const needsFocusGuard = useMemo(
+    () => source != null && htmlNeedsFocusGuard(source),
+    [source],
+  );
   const useUrlLoadPreview = shouldUrlLoadHtmlPreview({
     mode,
     isDeck: effectiveDeck,
@@ -4144,6 +4160,7 @@ function HtmlViewer({
     drawMode: drawOverlayOpen,
     tweaksBridge: tweaksBridgeRequired,
     forceInline: forceInline || needsSandboxShim,
+    needsFocusGuard,
   });
   const basePreviewSrcUrl = useMemo(
     () => `${projectRawUrl(projectId, file.name)}?v=${Math.round(file.mtime)}&r=${reloadKey}`,
@@ -4214,6 +4231,7 @@ function HtmlViewer({
       editBridge: manualEditMode,
       paletteBridge: true,
       initialPalette: selectedPalette,
+      previewFocusGuard: true,
     }) : ''),
     [previewSource, effectiveDeck, projectId, file.name, previewStateKey, manualEditMode, selectedPalette],
   );
@@ -4423,36 +4441,7 @@ function HtmlViewer({
     return true;
   }, []);
 
-  function logManualEditDebug(event: string, detail: Record<string, unknown> = {}) {
-    const pendingContent = manualEditPendingContentRef.current;
-    const pendingStyle = manualEditPendingStyleRef.current;
-    void fetch('/api/debug/manual-edit-log', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        event,
-        detail,
-        host: {
-          manualEditMode,
-          selectedId: selectedManualEditTargetIdRef.current,
-          saving: manualEditSavingRef.current,
-          pendingContent: pendingContent
-            ? { label: pendingContent.label, patch: pendingContent.patch }
-            : null,
-          pendingStyle: pendingStyle
-            ? { id: pendingStyle.id, label: pendingStyle.label, version: pendingStyle.version, keys: Object.keys(pendingStyle.styles) }
-            : null,
-          sourceLength: sourceRef.current?.length ?? null,
-        },
-      }),
-    }).catch(() => {});
-  }
-
-  function postSelectedManualEditTargetToIframe(
-    id: string | null,
-    target: HTMLIFrameElement | null = iframeRef.current,
-    focus = false,
-  ) {
+  function postSelectedManualEditTargetToIframe(id: string | null, target: HTMLIFrameElement | null = iframeRef.current) {
     const win = target?.contentWindow;
     if (!win) return;
     if (id && focus) {
@@ -4878,8 +4867,7 @@ function HtmlViewer({
     }
     function onMessage(ev: MessageEvent) {
       if (!isOurPreviewIframeSource(ev.source)) return;
-      if (!isActivePreviewIframeSource(ev.source)) return;
-      const data = ev.data as (ManualEditBridgeMessage | { type: 'od-edit-debug'; event?: string; detail?: Record<string, unknown> }) | null;
+      const data = ev.data as ManualEditBridgeMessage | null;
       if (!data?.type) return;
       if (data.type === 'od-edit-debug') {
         logManualEditDebug(data.event ?? 'bridge:unknown', data.detail ?? {});
@@ -6625,24 +6613,46 @@ function HtmlViewer({
                       title={file.name}
                       sandbox="allow-scripts allow-downloads"
                       srcDoc={srcDocTransportContent}
-	                      onLoad={() => {
-	                        const frame = srcDocPreviewIframeRef.current;
-	                        if (!useUrlLoadPreview) iframeRef.current = frame;
-	                        const isTransportShell = !!frame?.contentDocument?.querySelector('[data-od-lazy-srcdoc-transport]');
-	                        // Only the lazy transport shell is a fresh activation
-	                        // target. The artifact loaded via document.write also
-	                        // fires iframe load; treating that as a shell causes an
-	                        // endless rewrite loop.
-	                        if (isTransportShell) {
-	                          activatedSrcDocTransportHtmlRef.current = null;
-	                          // Belt-and-suspenders for the ready handshake: if the
-	                          // postMessage racing the parent's listener registration
-	                          // ever loses, the load event still tells us the shell
-	                          // script ran to completion.
-	                          if (useLazySrcDocTransport) setSrcDocShellReady(true);
-	                          activateSrcDocTransport(frame);
-	                        }
-	                        dcViewportRestoreAtRef.current = Date.now();
+                      onLoad={() => {
+                        const frame = srcDocPreviewIframeRef.current;
+                        if (!useUrlLoadPreview) iframeRef.current = frame;
+                        // Reset the activation dedupe exactly ONCE per
+                        // freshly mounted iframe DOM node, never on the
+                        // subsequent load events that the same node
+                        // emits during normal srcDoc rendering.
+                        //
+                        // The iframe's load event fires twice for one
+                        // successful activation: once when the lazy
+                        // transport shell HTML loads, and again when
+                        // our own document.open/write/close inside the
+                        // shell finishes. PR #2699 reset the dedupe on
+                        // every load so that switching
+                        // preview -> source -> preview (which remounts
+                        // this iframe as a fresh DOM node) would
+                        // re-activate the new shell. But resetting on
+                        // every load also re-activated on the SECOND
+                        // load of a non-remounted frame, which
+                        // re-triggered document.open/write/close, which
+                        // re-fired the load event, ad infinitum. The
+                        // dedupe ref oscillated between null and the
+                        // current srcDoc thousands of times per render
+                        // and each iteration restarted every CSS
+                        // animation from its `from` keyframe. Designs
+                        // using `animation-fill-mode: both` with
+                        // `from { opacity: 0 }` stayed at opacity 0
+                        // forever and the preview read as blank.
+                        // That is issue #2361.
+                        //
+                        // Tracking the last frame we reset for lets us
+                        // keep PR #2699's "remount after Source toggle"
+                        // fix while breaking the loop on plain renders.
+                        if (frame && srcDocFrameDedupeResetForRef.current !== frame) {
+                          srcDocFrameDedupeResetForRef.current = frame;
+                          activatedSrcDocTransportHtmlRef.current = null;
+                        }
+                        if (useLazySrcDocTransport) setSrcDocShellReady(true);
+                        activateSrcDocTransport(frame);
+                        dcViewportRestoreAtRef.current = Date.now();
                         frame?.contentWindow?.postMessage({
                           type: '__dc_set_viewport',
                           ...dcViewportRef.current,

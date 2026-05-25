@@ -17,6 +17,7 @@ test("isPendingApprovalRun matches approval-gated fork PR runs from GitHub's cap
     state: "open",
     changed_files: 1,
     head: {
+      ref: "fix/workflow-linkage",
       sha: "734076155c44e569304856590019cea54506fdab",
       repo: { full_name: "someone/open-design" },
     },
@@ -47,6 +48,7 @@ test("isPendingApprovalRun also accepts action_required runs reported only in st
     state: "open",
     changed_files: 1,
     head: {
+      ref: "fix/workflow-linkage",
       sha: "734076155c44e569304856590019cea54506fdab",
       repo: { full_name: "someone/open-design" },
     },
@@ -77,6 +79,7 @@ test("isPendingApprovalRun rejects runs outside the allowlist or without action_
     state: "open",
     changed_files: 1,
     head: {
+      ref: "fix/workflow-linkage",
       sha: "734076155c44e569304856590019cea54506fdab",
       repo: { full_name: "someone/open-design" },
     },
@@ -128,6 +131,7 @@ test("runTargetsPullRequest accepts empty run.pull_requests only when the head S
     state: "open",
     changed_files: 1,
     head: {
+      ref: "fix/workflow-linkage",
       sha: "734076155c44e569304856590019cea54506fdab",
       repo: { full_name: "someone/open-design" },
     },
@@ -149,7 +153,40 @@ test("runTargetsPullRequest accepts empty run.pull_requests only when the head S
     pull_requests: [],
   };
 
-  assert.equal(runTargetsPullRequest(run, pull, [pull]), true);
+  assert.equal(runTargetsPullRequest(run, pull, [pull], []), true);
+});
+
+test("runTargetsPullRequest accepts fork PR runs with no GitHub PR association when head identity matches", () => {
+  const pull = {
+    number: 2683,
+    state: "open",
+    changed_files: 1,
+    head: {
+      ref: "fix/workflow-linkage",
+      sha: "734076155c44e569304856590019cea54506fdab",
+      repo: { full_name: "someone/open-design" },
+    },
+    base: {
+      ref: "main",
+      sha: "4cd93a5c7a7b0db1961c854e55f8e0e6b1b45542",
+      repo: { full_name: "nexu-io/open-design" },
+    },
+  };
+
+  const run = {
+    id: 26273463769,
+    name: "CI",
+    event: "pull_request",
+    head_branch: "fix/workflow-linkage",
+    head_repository: { full_name: "someone/open-design" },
+    status: "completed",
+    conclusion: "action_required",
+    head_sha: pull.head.sha,
+    path: ".github/workflows/ci.yml@main",
+    pull_requests: [],
+  };
+
+  assert.equal(runTargetsPullRequest(run, pull, [], [pull]), true);
 });
 
 test("runTargetsPullRequest rejects ambiguous empty run.pull_requests associations", () => {
@@ -158,6 +195,7 @@ test("runTargetsPullRequest rejects ambiguous empty run.pull_requests associatio
     state: "open",
     changed_files: 1,
     head: {
+      ref: "fix/workflow-linkage",
       sha: "734076155c44e569304856590019cea54506fdab",
       repo: { full_name: "someone/open-design" },
     },
@@ -189,7 +227,83 @@ test("runTargetsPullRequest rejects ambiguous empty run.pull_requests associatio
     pull_requests: [],
   };
 
-  assert.equal(runTargetsPullRequest(run, pull, [pull, otherPull]), false);
+  assert.equal(runTargetsPullRequest(run, pull, [pull, otherPull], []), false);
+});
+
+test("runTargetsPullRequest rejects fork PR runs when multiple open PRs share the same head identity", () => {
+  const pull = {
+    number: 2683,
+    state: "open",
+    changed_files: 1,
+    head: {
+      ref: "fix/workflow-linkage",
+      sha: "734076155c44e569304856590019cea54506fdab",
+      repo: { full_name: "someone/open-design" },
+    },
+    base: {
+      ref: "main",
+      sha: "4cd93a5c7a7b0db1961c854e55f8e0e6b1b45542",
+      repo: { full_name: "nexu-io/open-design" },
+    },
+  };
+
+  const otherPull = {
+    ...pull,
+    number: 3001,
+    base: {
+      ref: "release",
+      sha: "8db117d728f967d108f6fdd64cb8d921d057f7f6",
+      repo: { full_name: "nexu-io/open-design" },
+    },
+  };
+
+  const run = {
+    id: 26273463769,
+    name: "CI",
+    event: "pull_request",
+    head_branch: pull.head.ref,
+    head_repository: pull.head.repo,
+    status: "completed",
+    conclusion: "action_required",
+    head_sha: pull.head.sha,
+    path: ".github/workflows/ci.yml@main",
+    pull_requests: [],
+  };
+
+  assert.equal(runTargetsPullRequest(run, pull, [], [pull, otherPull]), false);
+});
+
+test("runTargetsPullRequest rejects empty associations when fork head identity does not match", () => {
+  const pull = {
+    number: 2683,
+    state: "open",
+    changed_files: 1,
+    head: {
+      ref: "fix/workflow-linkage",
+      sha: "734076155c44e569304856590019cea54506fdab",
+      repo: { full_name: "someone/open-design" },
+    },
+    base: {
+      ref: "main",
+      sha: "4cd93a5c7a7b0db1961c854e55f8e0e6b1b45542",
+      repo: { full_name: "nexu-io/open-design" },
+    },
+  };
+
+  const run = {
+    id: 26273463769,
+    name: "CI",
+    event: "pull_request",
+    head_branch: "different-branch",
+    head_repository: { full_name: "someone/open-design" },
+    status: "completed",
+    conclusion: "action_required",
+    head_sha: pull.head.sha,
+    path: ".github/workflows/ci.yml@main",
+    pull_requests: [],
+  };
+
+  assert.equal(runTargetsPullRequest(run, pull, [], [pull]), false);
 });
 
 test("runTargetsPullRequest rejects runs that GitHub already associates to a different PR", () => {
@@ -198,6 +312,7 @@ test("runTargetsPullRequest rejects runs that GitHub already associates to a dif
     state: "open",
     changed_files: 1,
     head: {
+      ref: "fix/workflow-linkage",
       sha: "734076155c44e569304856590019cea54506fdab",
       repo: { full_name: "someone/open-design" },
     },
@@ -229,7 +344,7 @@ test("runTargetsPullRequest rejects runs that GitHub already associates to a dif
     ],
   };
 
-  assert.equal(runTargetsPullRequest(run, pull, [pull]), false);
+  assert.equal(runTargetsPullRequest(run, pull, [pull], []), false);
 });
 
 test("runTargetsPullRequest approves only the run that GitHub associates to the current PR when two PRs share a head SHA", () => {
@@ -238,6 +353,7 @@ test("runTargetsPullRequest approves only the run that GitHub associates to the 
     state: "open",
     changed_files: 1,
     head: {
+      ref: "fix/workflow-linkage",
       sha: "734076155c44e569304856590019cea54506fdab",
       repo: { full_name: "someone/open-design" },
     },
@@ -275,8 +391,8 @@ test("runTargetsPullRequest approves only the run that GitHub associates to the 
     pull_requests: [otherPull],
   };
 
-  assert.equal(runTargetsPullRequest(currentPrRun, pull, [pull, otherPull]), true);
-  assert.equal(runTargetsPullRequest(otherPrRun, pull, [pull, otherPull]), false);
+  assert.equal(runTargetsPullRequest(currentPrRun, pull, [pull, otherPull], []), true);
+  assert.equal(runTargetsPullRequest(otherPrRun, pull, [pull, otherPull], []), false);
 });
 
 test("runTargetsPullRequest ignores base tip churn for the same PR association", () => {
@@ -285,6 +401,7 @@ test("runTargetsPullRequest ignores base tip churn for the same PR association",
     state: "open",
     changed_files: 1,
     head: {
+      ref: "fix/workflow-linkage",
       sha: "734076155c44e569304856590019cea54506fdab",
       repo: { full_name: "someone/open-design" },
     },
@@ -315,7 +432,7 @@ test("runTargetsPullRequest ignores base tip churn for the same PR association",
     ],
   };
 
-  assert.equal(runTargetsPullRequest(run, pull, [pull]), true);
+  assert.equal(runTargetsPullRequest(run, pull, [pull], []), true);
 });
 
 test("listPendingApprovalRuns paginates all pull_request runs for the head SHA and filters action_required client-side", async () => {
@@ -324,6 +441,7 @@ test("listPendingApprovalRuns paginates all pull_request runs for the head SHA a
     state: "open",
     changed_files: 1,
     head: {
+      ref: "fix/workflow-linkage",
       sha: "734076155c44e569304856590019cea54506fdab",
       repo: { full_name: "someone/open-design" },
     },
@@ -344,6 +462,8 @@ test("listPendingApprovalRuns paginates all pull_request runs for the head SHA a
             id: 26273463600 + index,
             name: "CI",
             event: "pull_request",
+            head_branch: pull.head.ref,
+            head_repository: pull.head.repo,
             status: "completed",
             conclusion: "success",
             head_sha: pull.head.sha,
@@ -359,6 +479,8 @@ test("listPendingApprovalRuns paginates all pull_request runs for the head SHA a
             id: 26273463769,
             name: "CI",
             event: "pull_request",
+            head_branch: pull.head.ref,
+            head_repository: pull.head.repo,
             status: "completed",
             conclusion: "action_required",
             head_sha: pull.head.sha,
@@ -369,6 +491,8 @@ test("listPendingApprovalRuns paginates all pull_request runs for the head SHA a
             id: 26273463770,
             name: "CI",
             event: "pull_request",
+            head_branch: pull.head.ref,
+            head_repository: pull.head.repo,
             status: "completed",
             conclusion: "success",
             head_sha: pull.head.sha,
@@ -378,7 +502,8 @@ test("listPendingApprovalRuns paginates all pull_request runs for the head SHA a
         ],
       };
     },
-    loadPullRequestsForHeadSha: async () => [pull],
+    loadPullRequestsForHeadSha: async () => [],
+    loadPullRequestsForHeadRef: async () => [pull],
   });
 
   assert.deepEqual(requestedPaths, [
@@ -398,6 +523,7 @@ test("hasPullApprovalStateDrift ignores base tip churn but still rejects base re
     state: "open",
     changed_files: 1,
     head: {
+      ref: "fix/workflow-linkage",
       sha: "734076155c44e569304856590019cea54506fdab",
       repo: { full_name: "someone/open-design" },
     },
