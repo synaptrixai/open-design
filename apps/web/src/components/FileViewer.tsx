@@ -3849,7 +3849,7 @@ function HtmlViewer({
   const manualEditPendingStyleRef = useRef<ManualEditPendingStyleSave | null>(null);
   const manualEditStyleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualEditPendingContentRef = useRef<ManualEditPendingContentSave | null>(null);
-  const manualEditContentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [manualEditPendingContentLabel, setManualEditPendingContentLabel] = useState<string | null>(null);
   const manualEditPreviewVersionRef = useRef(0);
   const sourceRef = useRef<string | null>(source);
   const sourceFileKeyRef = useRef<string | null>(null);
@@ -4873,10 +4873,7 @@ function HtmlViewer({
         manualEditStyleTimerRef.current = null;
       }
       manualEditPendingContentRef.current = null;
-      if (manualEditContentTimerRef.current) {
-        clearTimeout(manualEditContentTimerRef.current);
-        manualEditContentTimerRef.current = null;
-      }
+      setManualEditPendingContentLabel(null);
       return;
     }
     function onMessage(ev: MessageEvent) {
@@ -4943,9 +4940,9 @@ function HtmlViewer({
           ? { id: data.id, kind: 'set-link', text: data.value, href: data.href }
           : { id: data.id, kind: 'set-text', value: data.value };
         logManualEditDebug('host:text-commit-patch', { patch, label: `Content: ${label}` });
-	        scheduleManualEditContentSave(patch, `Content: ${label}`);
-	        return;
-	      }
+        queueManualEditContentSave(patch, `Content: ${label}`);
+        return;
+      }
 	      if (data.type === 'od-edit-history-key') {
 	        logManualEditDebug('host:history-key-message', { action: data.action });
 	        void handleManualEditHistoryShortcut(data.action);
@@ -5013,14 +5010,10 @@ function HtmlViewer({
     manualEditStyleTimerRef.current = null;
   }
 
-  function scheduleManualEditContentSave(patch: ManualEditPatch, label: string) {
+  function queueManualEditContentSave(patch: ManualEditPatch, label: string) {
     manualEditPendingContentRef.current = { patch, label };
-    if (manualEditContentTimerRef.current) clearTimeout(manualEditContentTimerRef.current);
-    logManualEditDebug('host:content-save-scheduled', { patch, label, delayMs: 450 });
-    manualEditContentTimerRef.current = setTimeout(() => {
-      manualEditContentTimerRef.current = null;
-      void flushManualEditContentSave();
-    }, 450);
+    setManualEditPendingContentLabel(label);
+    logManualEditDebug('host:content-save-queued', { patch, label });
   }
 
   async function flushManualEditContentSave(): Promise<boolean> {
@@ -5028,15 +5021,10 @@ function HtmlViewer({
     if (!pending) return true;
     if (manualEditSavingRef.current) {
       logManualEditDebug('host:content-save-waiting', { pending });
-      if (!manualEditContentTimerRef.current) {
-        manualEditContentTimerRef.current = setTimeout(() => {
-          manualEditContentTimerRef.current = null;
-          void flushManualEditContentSave();
-        }, 250);
-      }
       return false;
     }
     manualEditPendingContentRef.current = null;
+    setManualEditPendingContentLabel(null);
     logManualEditDebug('host:content-save-flush', { pending });
     return applyManualEdit(pending.patch, pending.label);
   }
@@ -5176,13 +5164,6 @@ function HtmlViewer({
       manualEditSavingRef.current = false;
       setManualEditSaving(false);
       if (manualEditPendingStyleRef.current) scheduleManualEditStyleSave();
-      if (manualEditPendingContentRef.current && !manualEditContentTimerRef.current) {
-        logManualEditDebug('host:content-save-resume-after-apply', {});
-        manualEditContentTimerRef.current = setTimeout(() => {
-          manualEditContentTimerRef.current = null;
-          void flushManualEditContentSave();
-        }, 0);
-      }
     }
   }
 
@@ -5199,6 +5180,7 @@ function HtmlViewer({
     setManualEditUndone([]);
     manualEditPendingStyleRef.current = null;
     manualEditPendingContentRef.current = null;
+    setManualEditPendingContentLabel(null);
     setManualEditDraft((current) => ({ ...current, fullSource: persisted }));
     setManualEditError(message);
     return false;
@@ -6562,6 +6544,10 @@ function HtmlViewer({
                 onInvalidStyle={cancelManualEditPendingStyles}
                 onApplyPatch={(patch, label) => {
                   void applyManualEdit(patch, label);
+                }}
+                pendingInlineContentLabel={manualEditPendingContentLabel}
+                onSaveInlineContent={() => {
+                  void flushManualEditContentSave();
                 }}
                 onError={setManualEditError}
                 onClearSelection={() => {

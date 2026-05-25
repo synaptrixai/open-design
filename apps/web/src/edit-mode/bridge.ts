@@ -467,6 +467,7 @@ export function buildManualEditBridge(enabled: boolean): string {
   function replaceSelectionOrAppendText(el, text){
     if (!activeTextEdit) return false;
     var current = activeTextEdit.pendingReplaceOnType ? '' : (el.textContent || '');
+    var caretOffset = current.length;
     var selection = window.getSelection && window.getSelection();
     if (selection && selection.rangeCount > 0) {
       var range = selection.getRangeAt(0);
@@ -483,14 +484,18 @@ export function buildManualEditBridge(enabled: boolean): string {
           afterRange.setStart(range.endContainer, range.endOffset);
           after = afterRange.toString();
           current = before + text + after;
+          caretOffset = before.length + text.length;
         } catch (_) {
           current = (activeTextEdit.pendingReplaceOnType ? '' : (el.textContent || '')) + text;
+          caretOffset = current.length;
         }
       } else {
         current += text;
+        caretOffset = current.length;
       }
     } else {
       current += text;
+      caretOffset = current.length;
     }
     activeTextEdit.pendingReplaceOnType = false;
     restoringInlineText = true;
@@ -502,9 +507,13 @@ export function buildManualEditBridge(enabled: boolean): string {
     restoringInlineText = false;
     noteInlineTextInput(el);
     try {
+      var textNode = el.firstChild && el.firstChild.nodeType === 3 ? el.firstChild : null;
+      var nextSelection = window.getSelection && window.getSelection();
+      if (!textNode || !nextSelection) return true;
       var cursorRange = document.createRange();
-      cursorRange.selectNodeContents(el);
-      cursorRange.collapse(false);
+      var offset = Math.max(0, Math.min(caretOffset, textNode.textContent ? textNode.textContent.length : 0));
+      cursorRange.setStart(textNode, offset);
+      cursorRange.collapse(true);
       var nextSelection = window.getSelection && window.getSelection();
       if (nextSelection) {
         nextSelection.removeAllRanges();
@@ -533,11 +542,57 @@ export function buildManualEditBridge(enabled: boolean): string {
       ev.preventDefault();
       ev.stopPropagation();
       var current = activeTextEdit.pendingReplaceOnType ? '' : (el.textContent || '');
+      var next = current;
+      var caretOffset = Math.max(0, current.length - 1);
+      var selection = window.getSelection && window.getSelection();
+      if (selection && selection.rangeCount > 0) {
+        var range = selection.getRangeAt(0);
+        if (el.contains(range.commonAncestorContainer)) {
+          try {
+            var beforeRange = document.createRange();
+            beforeRange.selectNodeContents(el);
+            beforeRange.setEnd(range.startContainer, range.startOffset);
+            var before = beforeRange.toString();
+            var afterRange = document.createRange();
+            afterRange.selectNodeContents(el);
+            afterRange.setStart(range.endContainer, range.endOffset);
+            var after = afterRange.toString();
+            if (!range.collapsed) {
+              next = before + after;
+              caretOffset = before.length;
+            } else {
+              var removeAt = Math.max(0, before.length - 1);
+              next = before.slice(0, removeAt) + after;
+              caretOffset = removeAt;
+            }
+          } catch (_) {
+            next = current.slice(0, Math.max(0, current.length - 1));
+            caretOffset = next.length;
+          }
+        } else {
+          next = current.slice(0, Math.max(0, current.length - 1));
+          caretOffset = next.length;
+        }
+      } else {
+        next = current.slice(0, Math.max(0, current.length - 1));
+        caretOffset = next.length;
+      }
       activeTextEdit.pendingReplaceOnType = false;
       restoringInlineText = true;
-      el.textContent = current.slice(0, Math.max(0, current.length - 1));
+      el.textContent = next;
       restoringInlineText = false;
       noteInlineTextInput(el);
+      try {
+        var textNode = el.firstChild && el.firstChild.nodeType === 3 ? el.firstChild : null;
+        var nextSelection = window.getSelection && window.getSelection();
+        if (!textNode || !nextSelection) return;
+        var range = document.createRange();
+        var offset = Math.max(0, Math.min(caretOffset, textNode.textContent ? textNode.textContent.length : 0));
+        range.setStart(textNode, offset);
+        range.collapse(true);
+        nextSelection.removeAllRanges();
+        nextSelection.addRange(range);
+      } catch (_) {}
     }
   }
   function restoreInlineTextContent(){
