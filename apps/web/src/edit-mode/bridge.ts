@@ -45,7 +45,7 @@ export function isSourceMappableManualEditElement(el: Element): boolean {
 
 export function buildManualEditBridge(enabled: boolean): string {
   return `<script data-od-edit-bridge>(function(){
-  var bridgeVersion = 'inline-text-v4';
+  var bridgeVersion = 'inline-text-v5';
   var enabled = ${JSON.stringify(enabled)};
   var discoverySelector = ${JSON.stringify(MANUAL_EDIT_DISCOVERY_SELECTOR)};
   var hostNodeSelector = ${JSON.stringify(MANUAL_EDIT_HOST_NODE_SELECTOR)};
@@ -221,7 +221,7 @@ export function buildManualEditBridge(enabled: boolean): string {
         lastCommittedText: el.textContent || '',
         lastCommittedHtml: originalOuterHtml,
         focusSelectionApplied: false,
-        pendingReplaceOnType: true,
+        pendingReplaceOnType: false,
         useOuterHtml: hasElementChildren(el)
       };
     } else {
@@ -241,10 +241,7 @@ export function buildManualEditBridge(enabled: boolean): string {
       } catch (_) {
         el.focus();
       }
-      if (!activeTextEdit.focusSelectionApplied) {
-        selectTextContents(el);
-        activeTextEdit.focusSelectionApplied = true;
-      }
+      if (!activeTextEdit.focusSelectionApplied) activeTextEdit.focusSelectionApplied = true;
     }, 80);
   }
   function setSelectedTarget(id, focus){
@@ -342,7 +339,7 @@ export function buildManualEditBridge(enabled: boolean): string {
       lastCommittedText: el.textContent || '',
       lastCommittedHtml: originalOuterHtml,
       focusSelectionApplied: false,
-      pendingReplaceOnType: true,
+      pendingReplaceOnType: false,
       useOuterHtml: hasElementChildren(el)
     };
     debug('bridge:begin-inline-edit', { id: id, tag: el.tagName ? el.tagName.toLowerCase() : null, text: el.textContent || '' });
@@ -357,7 +354,6 @@ export function buildManualEditBridge(enabled: boolean): string {
       } catch (_) {
         el.focus();
       }
-      selectTextContents(el);
       if (activeTextEdit && activeTextEdit.id === id) activeTextEdit.focusSelectionApplied = true;
     }, 0);
   }

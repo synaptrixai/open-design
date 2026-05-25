@@ -148,7 +148,7 @@ describe('manual edit bridge target normalization', () => {
     const bridge = buildManualEditBridge(true);
 
     expect(bridge).toContain("type: 'od-edit-text-commit'");
-    expect(bridge).toContain("bridgeVersion = 'inline-text-v4'");
+    expect(bridge).toContain("bridgeVersion = 'inline-text-v5'");
     expect(bridge).toContain("el.setAttribute('contenteditable', 'plaintext-only')");
     expect(bridge).toContain("explicit === 'text' || explicit === 'link' || explicit === 'image' || explicit === 'container'");
     expect(bridge).toContain('useOuterHtml: hasElementChildren(el)');
@@ -161,7 +161,7 @@ describe('manual edit bridge target normalization', () => {
     expect(bridge).toContain("document.addEventListener('beforeinput', handleInlineTextBeforeInput, true)");
     expect(bridge).toContain("ev.inputType === 'insertText'");
     expect(bridge).toContain('focusSelectionApplied: false');
-    expect(bridge).toContain('pendingReplaceOnType: true');
+    expect(bridge).toContain('pendingReplaceOnType: false');
     expect(bridge).toContain('applyInlineTextKeyboardInput(ev)');
     expect(bridge).toContain("ev.data.type === 'od-edit-key'");
     expect(bridge).toContain("type: 'od-edit-history-key'");
