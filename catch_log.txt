@@ -1,0 +1,2 @@
+[2026-05-25 14:13:25.832] [INFO] Activating extension matepek.vscode-catch2-test-adapter
+[2026-05-25 14:13:25.834] [INFO] Activation finished

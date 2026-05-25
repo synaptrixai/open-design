@@ -45,6 +45,7 @@ export function isSourceMappableManualEditElement(el: Element): boolean {
 
 export function buildManualEditBridge(enabled: boolean): string {
   return `<script data-od-edit-bridge>(function(){
+  var bridgeVersion = 'inline-text-v4';
   var enabled = ${JSON.stringify(enabled)};
   var discoverySelector = ${JSON.stringify(MANUAL_EDIT_DISCOVERY_SELECTOR)};
   var hostNodeSelector = ${JSON.stringify(MANUAL_EDIT_HOST_NODE_SELECTOR)};
@@ -52,7 +53,24 @@ export function buildManualEditBridge(enabled: boolean): string {
   var positionOverrideAttr = 'data-od-edit-position-override';
   var styleProps = ['fontFamily','fontSize','fontWeight','color','textAlign','lineHeight','letterSpacing','width','height','minHeight','gap','flexDirection','justifyContent','alignItems','backgroundColor','opacity','padding','paddingTop','paddingRight','paddingBottom','paddingLeft','margin','marginTop','marginRight','marginBottom','marginLeft','border','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderStyle','borderColor','borderRadius'];
   var activeTextEdit = null;
-  var inlineTextEditRestoreTimer = null;
+  var inlineTextCommitTimer = null;
+  var restoringInlineText = false;
+  var lastTargetsJson = '';
+  function debug(event, detail){
+    try {
+      window.parent.postMessage({
+        type: 'od-edit-debug',
+        event: event,
+        detail: Object.assign({
+          enabled: enabled,
+          bridgeVersion: bridgeVersion,
+          activeTag: document.activeElement && document.activeElement.tagName ? document.activeElement.tagName.toLowerCase() : null,
+          hasFocus: document.hasFocus ? document.hasFocus() : null,
+          activeEditId: activeTextEdit ? activeTextEdit.id : null
+        }, detail || {})
+      }, '*');
+    } catch (_) {}
+  }
   function isHostNode(el){
     return !!(el && el.matches && el.matches(hostNodeSelector));
   }
@@ -173,21 +191,37 @@ export function buildManualEditBridge(enabled: boolean): string {
   }
   function postTargets(){
     if (!enabled) return;
-    window.parent.postMessage({ type: 'od-edit-targets', targets: allTargets() }, '*');
+    var targets = allTargets();
+    var targetsJson = JSON.stringify(targets.map(function(target){
+      return [target.id, target.rect.x, target.rect.y, target.rect.width, target.rect.height, target.text];
+    }));
+    if (targetsJson === lastTargetsJson) return;
+    lastTargetsJson = targetsJson;
+    window.parent.postMessage({ type: 'od-edit-targets', targets: targets }, '*');
   }
-  function clearSelectedTarget(){
+  function clearSelectedTarget(exceptId){
     var selected = document.querySelectorAll('[data-od-edit-selected]');
-    for (var i = 0; i < selected.length; i++) selected[i].removeAttribute('data-od-edit-selected');
+    for (var i = 0; i < selected.length; i++) {
+      if (exceptId && stableId(selected[i]) === exceptId) continue;
+      selected[i].removeAttribute('data-od-edit-selected');
+    }
   }
-  function makeInlineTextEditable(el, id){
+  function makeInlineTextEditable(el, id, focus){
     if (!enabled || !isDirectTextEditable(el)) return;
     if (!activeTextEdit || activeTextEdit.id !== id) {
+      var originalOuterHtml = (el.outerHTML || '').replace(/\\sdata-od-runtime-id="[^"]*"/g, '').replace(/\\sdata-od-source-path="[^"]*"/g, '').replace(/\\sdata-od-edit-selected="[^"]*"/g, '').replace(/\\sdata-od-editing-text="[^"]*"/g, '').replace(/\\scontenteditable="[^"]*"/g, '').replace(/\\sspellcheck="[^"]*"/g, '');
       activeTextEdit = {
         el: el,
         id: id,
         originalText: el.textContent || '',
+        currentText: el.textContent || '',
         originalHtml: el.innerHTML || '',
-        originalOuterHtml: (el.outerHTML || '').replace(/\\sdata-od-runtime-id="[^"]*"/g, '').replace(/\\sdata-od-source-path="[^"]*"/g, '').replace(/\\sdata-od-edit-selected="[^"]*"/g, '').replace(/\\sdata-od-editing-text="[^"]*"/g, '').replace(/\\scontenteditable="[^"]*"/g, '').replace(/\\sspellcheck="[^"]*"/g, ''),
+        currentHtml: el.innerHTML || '',
+        originalOuterHtml: originalOuterHtml,
+        lastCommittedText: el.textContent || '',
+        lastCommittedHtml: originalOuterHtml,
+        focusSelectionApplied: false,
+        pendingReplaceOnType: true,
         useOuterHtml: hasElementChildren(el)
       };
     } else {
@@ -196,21 +230,30 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (el.getAttribute('contenteditable') !== 'plaintext-only') el.setAttribute('contenteditable', 'plaintext-only');
     if (el.getAttribute('spellcheck') !== 'true') el.setAttribute('spellcheck', 'true');
     if (el.getAttribute('data-od-editing-text') !== 'true') el.setAttribute('data-od-editing-text', 'true');
+    if (!focus || document.activeElement === el) return;
     setTimeout(function(){
+      if (!activeTextEdit || activeTextEdit.id !== id || document.activeElement === el) return;
+      try {
+        window.focus();
+      } catch (_) {}
       try {
         el.focus({ preventScroll: true });
       } catch (_) {
         el.focus();
       }
-    }, 0);
+      if (!activeTextEdit.focusSelectionApplied) {
+        selectTextContents(el);
+        activeTextEdit.focusSelectionApplied = true;
+      }
+    }, 80);
   }
-  function setSelectedTarget(id){
-    clearSelectedTarget();
+  function setSelectedTarget(id, focus){
+    clearSelectedTarget(id);
     if (!id) return;
     var el = findById(id);
     if (el) {
-      el.setAttribute('data-od-edit-selected', 'true');
-      makeInlineTextEditable(el, id);
+      if (el.getAttribute('data-od-edit-selected') !== 'true') el.setAttribute('data-od-edit-selected', 'true');
+      makeInlineTextEditable(el, id, !!focus);
     }
   }
   function selectTextContents(el){
@@ -227,6 +270,10 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (!activeTextEdit) return;
     var edit = activeTextEdit;
     activeTextEdit = null;
+    if (inlineTextCommitTimer) {
+      clearTimeout(inlineTextCommitTimer);
+      inlineTextCommitTimer = null;
+    }
     edit.el.removeAttribute('contenteditable');
     edit.el.removeAttribute('spellcheck');
     edit.el.removeAttribute('data-od-editing-text');
@@ -234,10 +281,30 @@ export function buildManualEditBridge(enabled: boolean): string {
       edit.el.innerHTML = edit.originalHtml;
       return;
     }
-    var value = edit.el.textContent || '';
-    var html = (edit.el.outerHTML || '').replace(/\\sdata-od-runtime-id="[^"]*"/g, '').replace(/\\sdata-od-source-path="[^"]*"/g, '').replace(/\\sdata-od-edit-selected="[^"]*"/g, '').replace(/\\sdata-od-editing-text="[^"]*"/g, '').replace(/\\scontenteditable="[^"]*"/g, '').replace(/\\sspellcheck="[^"]*"/g, '');
-    if (value === edit.originalText && html === edit.originalOuterHtml) return;
-    var target = targetFrom(edit.el, true);
+    postInlineTextCommit(edit);
+  }
+  function sanitizedEditableOuterHtml(el){
+    return (el.outerHTML || '').replace(/\\sdata-od-runtime-id="[^"]*"/g, '').replace(/\\sdata-od-source-path="[^"]*"/g, '').replace(/\\sdata-od-edit-selected="[^"]*"/g, '').replace(/\\sdata-od-editing-text="[^"]*"/g, '').replace(/\\scontenteditable="[^"]*"/g, '').replace(/\\sspellcheck="[^"]*"/g, '');
+  }
+  function postInlineTextCommit(edit){
+    var el = findById(edit.id) || edit.el;
+    if (!el) {
+      debug('bridge:commit-missing-element', { id: edit.id });
+      return;
+    }
+    var value = el.textContent || '';
+    var html = sanitizedEditableOuterHtml(el);
+    if (value === edit.originalText && html === edit.originalOuterHtml) {
+      debug('bridge:commit-skipped-original', { id: edit.id, value: value });
+      return;
+    }
+    if (value === edit.lastCommittedText && html === edit.lastCommittedHtml) {
+      debug('bridge:commit-skipped-duplicate', { id: edit.id, value: value });
+      return;
+    }
+    edit.lastCommittedText = value;
+    edit.lastCommittedHtml = html;
+    var target = targetFrom(el, true);
     var message = {
       type: 'od-edit-text-commit',
       id: edit.id,
@@ -246,31 +313,52 @@ export function buildManualEditBridge(enabled: boolean): string {
       useOuterHtml: !!edit.useOuterHtml,
       target: target
     };
-    if (target.kind === 'link') message.href = edit.el.getAttribute('href') || '';
+    if (target.kind === 'link') message.href = el.getAttribute('href') || '';
+    debug('bridge:commit-post', { id: edit.id, value: value, htmlLength: html.length, useOuterHtml: !!edit.useOuterHtml });
     window.parent.postMessage(message, '*');
+  }
+  function scheduleInlineTextCommit(){
+    if (!activeTextEdit) return;
+    if (inlineTextCommitTimer) clearTimeout(inlineTextCommitTimer);
+    inlineTextCommitTimer = setTimeout(function(){
+      inlineTextCommitTimer = null;
+      if (activeTextEdit) postInlineTextCommit(activeTextEdit);
+    }, 350);
   }
   function beginInlineTextEdit(el){
     if (!isDirectTextEditable(el)) return;
     if (activeTextEdit && activeTextEdit.el === el) return;
     clearInlineTextEdit(true);
     var id = stableId(el);
+    var originalOuterHtml = sanitizedEditableOuterHtml(el);
     activeTextEdit = {
       el: el,
       id: id,
       originalText: el.textContent || '',
+      currentText: el.textContent || '',
       originalHtml: el.innerHTML || '',
-      originalOuterHtml: (el.outerHTML || '').replace(/\\sdata-od-runtime-id="[^"]*"/g, '').replace(/\\sdata-od-source-path="[^"]*"/g, '').replace(/\\sdata-od-edit-selected="[^"]*"/g, '').replace(/\\sdata-od-editing-text="[^"]*"/g, '').replace(/\\scontenteditable="[^"]*"/g, '').replace(/\\sspellcheck="[^"]*"/g, ''),
+      currentHtml: el.innerHTML || '',
+      originalOuterHtml: originalOuterHtml,
+      lastCommittedText: el.textContent || '',
+      lastCommittedHtml: originalOuterHtml,
+      focusSelectionApplied: false,
+      pendingReplaceOnType: true,
       useOuterHtml: hasElementChildren(el)
     };
-    setSelectedTarget(id);
+    debug('bridge:begin-inline-edit', { id: id, tag: el.tagName ? el.tagName.toLowerCase() : null, text: el.textContent || '' });
+    setSelectedTarget(id, true);
     scheduleInlineTextEditRestores(id, activeTextEdit);
     setTimeout(function(){
+      try {
+        window.focus();
+      } catch (_) {}
       try {
         el.focus({ preventScroll: true });
       } catch (_) {
         el.focus();
       }
       selectTextContents(el);
+      if (activeTextEdit && activeTextEdit.id === id) activeTextEdit.focusSelectionApplied = true;
     }, 0);
   }
   function ensureInlineTextEditActive(){
@@ -278,11 +366,17 @@ export function buildManualEditBridge(enabled: boolean): string {
     var el = findById(activeTextEdit.id);
     if (!el || !isDirectTextEditable(el)) return;
     activeTextEdit.el = el;
-    setSelectedTarget(activeTextEdit.id);
+    if (el.getAttribute('data-od-edit-selected') !== 'true') {
+      clearSelectedTarget(activeTextEdit.id);
+      el.setAttribute('data-od-edit-selected', 'true');
+    }
     if (el.getAttribute('contenteditable') !== 'plaintext-only') el.setAttribute('contenteditable', 'plaintext-only');
     if (el.getAttribute('spellcheck') !== 'true') el.setAttribute('spellcheck', 'true');
     if (el.getAttribute('data-od-editing-text') !== 'true') el.setAttribute('data-od-editing-text', 'true');
     if (document.activeElement !== el) {
+      try {
+        window.focus();
+      } catch (_) {}
       try {
         el.focus({ preventScroll: true });
       } catch (_) {
@@ -299,8 +393,14 @@ export function buildManualEditBridge(enabled: boolean): string {
         el: el,
         id: id,
         originalText: snapshot.originalText,
+        currentText: snapshot.currentText,
         originalHtml: snapshot.originalHtml,
+        currentHtml: snapshot.currentHtml,
         originalOuterHtml: snapshot.originalOuterHtml,
+        lastCommittedText: snapshot.lastCommittedText,
+        lastCommittedHtml: snapshot.lastCommittedHtml,
+        focusSelectionApplied: snapshot.focusSelectionApplied,
+        pendingReplaceOnType: snapshot.pendingReplaceOnType,
         useOuterHtml: snapshot.useOuterHtml
       };
     }
@@ -312,12 +412,137 @@ export function buildManualEditBridge(enabled: boolean): string {
       setTimeout(function(){ restoreInlineTextEditById(id, snapshot); }, delay);
     });
   }
-  function scheduleInlineTextEditRestore(){
-    if (!activeTextEdit || inlineTextEditRestoreTimer) return;
-    inlineTextEditRestoreTimer = setTimeout(function(){
-      inlineTextEditRestoreTimer = null;
-      ensureInlineTextEditActive();
-    }, 0);
+  function noteInlineTextInput(el){
+    if (!activeTextEdit || !el || stableId(el) !== activeTextEdit.id) return;
+    activeTextEdit.el = el;
+    activeTextEdit.currentText = el.textContent || '';
+    activeTextEdit.currentHtml = el.innerHTML || '';
+    activeTextEdit.pendingReplaceOnType = false;
+    debug('bridge:input', { id: activeTextEdit.id, value: activeTextEdit.currentText });
+    scheduleInlineTextCommit();
+  }
+  function applyInlineTextKeyboardInput(ev){
+    if (!activeTextEdit) return false;
+    var el = findById(activeTextEdit.id) || activeTextEdit.el;
+    if (!el || !isDirectTextEditable(el) || document.activeElement === el) return false;
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return false;
+    var next = null;
+    if (ev.key && ev.key.length === 1) {
+      next = activeTextEdit.pendingReplaceOnType ? ev.key : (el.textContent || '') + ev.key;
+    } else if (ev.key === 'Backspace') {
+      var current = activeTextEdit.pendingReplaceOnType ? '' : (el.textContent || '');
+      next = current.slice(0, Math.max(0, current.length - 1));
+    } else if (ev.key === 'Delete') {
+      next = activeTextEdit.pendingReplaceOnType ? '' : (el.textContent || '');
+    }
+    if (next === null) return false;
+    ev.preventDefault();
+    ev.stopPropagation();
+    activeTextEdit.pendingReplaceOnType = false;
+    restoringInlineText = true;
+    el.textContent = next;
+    el.setAttribute('contenteditable', 'plaintext-only');
+    el.setAttribute('spellcheck', 'true');
+    el.setAttribute('data-od-editing-text', 'true');
+    if (el.getAttribute('data-od-edit-selected') !== 'true') el.setAttribute('data-od-edit-selected', 'true');
+    restoringInlineText = false;
+    noteInlineTextInput(el);
+    debug('bridge:key-applied', { id: activeTextEdit.id, key: ev.key, value: next });
+    return true;
+  }
+  function replaceSelectionOrAppendText(el, text){
+    if (!activeTextEdit) return false;
+    var current = activeTextEdit.pendingReplaceOnType ? '' : (el.textContent || '');
+    var selection = window.getSelection && window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      var range = selection.getRangeAt(0);
+      if (el.contains(range.commonAncestorContainer)) {
+        var before = '';
+        var after = '';
+        try {
+          var beforeRange = document.createRange();
+          beforeRange.selectNodeContents(el);
+          beforeRange.setEnd(range.startContainer, range.startOffset);
+          before = beforeRange.toString();
+          var afterRange = document.createRange();
+          afterRange.selectNodeContents(el);
+          afterRange.setStart(range.endContainer, range.endOffset);
+          after = afterRange.toString();
+          current = before + text + after;
+        } catch (_) {
+          current = (activeTextEdit.pendingReplaceOnType ? '' : (el.textContent || '')) + text;
+        }
+      } else {
+        current += text;
+      }
+    } else {
+      current += text;
+    }
+    activeTextEdit.pendingReplaceOnType = false;
+    restoringInlineText = true;
+    el.textContent = current;
+    el.setAttribute('contenteditable', 'plaintext-only');
+    el.setAttribute('spellcheck', 'true');
+    el.setAttribute('data-od-editing-text', 'true');
+    if (el.getAttribute('data-od-edit-selected') !== 'true') el.setAttribute('data-od-edit-selected', 'true');
+    restoringInlineText = false;
+    noteInlineTextInput(el);
+    try {
+      var cursorRange = document.createRange();
+      cursorRange.selectNodeContents(el);
+      cursorRange.collapse(false);
+      var nextSelection = window.getSelection && window.getSelection();
+      if (nextSelection) {
+        nextSelection.removeAllRanges();
+        nextSelection.addRange(cursorRange);
+      }
+    } catch (_) {}
+    return true;
+  }
+  function handleInlineTextBeforeInput(ev){
+    if (!activeTextEdit || !ev.target) return;
+    var el = findById(activeTextEdit.id) || activeTextEdit.el;
+    if (!el || !isDirectTextEditable(el) || ev.target !== el) return;
+    debug('bridge:beforeinput', {
+      id: activeTextEdit.id,
+      inputType: ev.inputType || '',
+      data: typeof ev.data === 'string' ? ev.data : null,
+      value: el.textContent || ''
+    });
+    if (ev.inputType === 'insertText' && typeof ev.data === 'string') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      replaceSelectionOrAppendText(el, ev.data);
+      return;
+    }
+    if (ev.inputType === 'deleteContentBackward') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      var current = activeTextEdit.pendingReplaceOnType ? '' : (el.textContent || '');
+      activeTextEdit.pendingReplaceOnType = false;
+      restoringInlineText = true;
+      el.textContent = current.slice(0, Math.max(0, current.length - 1));
+      restoringInlineText = false;
+      noteInlineTextInput(el);
+    }
+  }
+  function restoreInlineTextContent(){
+    if (!activeTextEdit || restoringInlineText) return;
+    var el = findById(activeTextEdit.id);
+    if (!el || !isDirectTextEditable(el)) return;
+    activeTextEdit.el = el;
+    if (document.activeElement === el) {
+      noteInlineTextInput(el);
+      return;
+    }
+    if (typeof activeTextEdit.currentText !== 'string' || el.textContent === activeTextEdit.currentText) return;
+    restoringInlineText = true;
+    el.textContent = activeTextEdit.currentText;
+    el.setAttribute('contenteditable', 'plaintext-only');
+    el.setAttribute('spellcheck', 'true');
+    el.setAttribute('data-od-editing-text', 'true');
+    if (el.getAttribute('data-od-edit-selected') !== 'true') el.setAttribute('data-od-edit-selected', 'true');
+    restoringInlineText = false;
   }
   function closestTarget(event){
     var el = event.target;
@@ -336,17 +561,33 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (!enabled) return;
     var el = closestTarget(ev);
     if (!el) return;
+    var editableText = isDirectTextEditable(el);
+    debug('bridge:pointer-pick', { eventType: ev.type, id: stableId(el), tag: el.tagName ? el.tagName.toLowerCase() : null, text: el.textContent || '' });
     if (activeTextEdit && activeTextEdit.el === el) {
-      ev.preventDefault();
-      ev.stopPropagation();
       ensureInlineTextEditActive();
+      if (!editableText) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
       return;
     }
     if (activeTextEdit) clearInlineTextEdit(true);
-    ev.preventDefault();
-    ev.stopPropagation();
     window.parent.postMessage({ type: 'od-edit-select', target: targetFrom(el, true) }, '*');
     beginInlineTextEdit(el);
+    if (!editableText) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  }
+  function preventManualEditActivation(ev){
+    if (!enabled) return;
+    var el = closestTarget(ev);
+    if (!el) return;
+    var tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'a' || tag === 'button' || !isDirectTextEditable(el)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
   }
   function camelToKebab(name){ return String(name).replace(/[A-Z]/g, function(m){ return '-' + m.toLowerCase(); }); }
   function cssEscapeId(value){ if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(value); return String(value).replace(/"/g, '\\\\"'); }
@@ -429,6 +670,7 @@ export function buildManualEditBridge(enabled: boolean): string {
   window.addEventListener('message', function(ev){
     if (!ev.data) return;
     if (ev.data.type === 'od-edit-mode') {
+      var wasEnabled = enabled;
       enabled = !!ev.data.enabled;
       document.documentElement.toggleAttribute('data-od-edit-mode', enabled);
       setOverlayNeutralized(enabled);
@@ -436,26 +678,50 @@ export function buildManualEditBridge(enabled: boolean): string {
         clearInlineTextEdit(false);
         clearSelectedTarget();
       }
-      if (enabled) setTimeout(postTargets, 0);
+      if (enabled && !wasEnabled) setTimeout(postTargets, 0);
       return;
     }
     if (ev.data.type === 'od-edit-selected-target') {
       var selectedId = ev.data.id || null;
+      debug('bridge:selected-target-message', { id: selectedId });
       if (activeTextEdit && !selectedId) return;
+      if (activeTextEdit && activeTextEdit.id === selectedId) {
+        setSelectedTarget(selectedId, false);
+        return;
+      }
       if (activeTextEdit && activeTextEdit.id !== selectedId) clearInlineTextEdit(true);
-      setSelectedTarget(selectedId);
+      setSelectedTarget(selectedId, true);
       return;
     }
     if (ev.data.type === 'od-edit-preview-style') {
       applyPreviewStyles(ev.data.id, ev.data.styles || {}, ev.data.version);
       return;
     }
+    if (ev.data.type === 'od-edit-key') {
+      debug('bridge:key-message', { key: ev.data.key, shiftKey: !!ev.data.shiftKey });
+      applyInlineTextKeyboardInput({
+        key: typeof ev.data.key === 'string' ? ev.data.key : '',
+        shiftKey: !!ev.data.shiftKey,
+        metaKey: false,
+        ctrlKey: false,
+        altKey: false,
+        preventDefault: function(){},
+        stopPropagation: function(){}
+      });
+      return;
+    }
   });
   document.addEventListener('pointerdown', handleManualEditPick, true);
-  document.addEventListener('mousedown', handleManualEditPick, true);
-  document.addEventListener('click', handleManualEditPick, true);
+  document.addEventListener('click', preventManualEditActivation, true);
+  document.addEventListener('beforeinput', handleInlineTextBeforeInput, true);
+  document.addEventListener('input', function(ev){
+    if (restoringInlineText || !activeTextEdit || !ev.target) return;
+    noteInlineTextInput(ev.target);
+  }, true);
   document.addEventListener('keydown', function(ev){
     if (!activeTextEdit) return;
+    debug('bridge:keydown', { key: ev.key, targetTag: ev.target && ev.target.tagName ? ev.target.tagName.toLowerCase() : null });
+    if (applyInlineTextKeyboardInput(ev)) return;
     if (ev.key === 'Escape') {
       ev.preventDefault();
       ev.stopPropagation();
@@ -470,17 +736,16 @@ export function buildManualEditBridge(enabled: boolean): string {
   }, true);
   window.addEventListener('resize', postTargets);
   if (typeof MutationObserver !== 'undefined') {
-    new MutationObserver(function(){ scheduleInlineTextEditRestore(); }).observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['contenteditable','data-od-editing-text']
-    });
+    new MutationObserver(function(){
+      if (!activeTextEdit || restoringInlineText) return;
+      setTimeout(restoreInlineTextContent, 0);
+    }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', postTargets);
   else setTimeout(postTargets, 0);
   document.documentElement.toggleAttribute('data-od-edit-mode', enabled);
   setOverlayNeutralized(enabled);
+  debug('bridge:ready', {});
 })();</script>`;
 }
 

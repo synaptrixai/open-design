@@ -3873,6 +3873,20 @@ export async function startServer({
     res.json({ ok: true, version: versionInfo.version });
   });
 
+  app.post('/api/debug/manual-edit-log', (req, res) => {
+    const entry = {
+      at: new Date().toISOString(),
+      pid: process.pid,
+      body: req.body ?? null,
+    };
+    try {
+      fs.appendFileSync('/tmp/open-design-edit-debug.log', `${JSON.stringify(entry)}\n`, 'utf8');
+      res.json({ ok: true, path: '/tmp/open-design-edit-debug.log' });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   app.get('/api/version', async (_req, res) => {
     const version = await readCurrentAppVersionInfo();
     res.json({ version });
