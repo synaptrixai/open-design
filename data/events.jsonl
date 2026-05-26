@@ -10,3 +10,8 @@
 {"ts":"2026-05-26T14:09:47.793Z","type":"pr_merged","user":"lefarcen","pr":2994,"delta":12,"promoted":null}
 {"ts":"2026-05-26T14:22:34.736Z","type":"issue_opened_accepted","user":"xxiaoxiong","issue":3016,"delta":0}
 {"ts":"2026-05-26T14:24:00.256Z","type":"issue_opened_accepted","user":"xiaobinHub","issue":3017,"delta":0}
+{"ts":"2026-05-26T14:53:15.701Z","type":"pr_merged","user":"AmyShang-alt","pr":2992,"delta":30,"promoted":"signal"}
+{"ts":"2026-05-26T15:05:02.563Z","type":"pr_merged","user":"leno23","pr":3014,"delta":30,"promoted":"signal"}
+{"ts":"2026-05-26T15:13:00.492Z","type":"pr_merged","user":"mturac","pr":2949,"delta":30,"promoted":"signal"}
+{"ts":"2026-05-26T15:17:22.677Z","type":"issue_opened_accepted","user":"522700967-wq","issue":3028,"delta":0}
+{"ts":"2026-05-26T17:00:01.833Z","type":"pr_merged","user":"alchemistklk","pr":3048,"delta":30,"promoted":"signal"}
