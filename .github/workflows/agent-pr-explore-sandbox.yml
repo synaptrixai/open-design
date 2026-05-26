@@ -1,19 +1,9 @@
 name: agent-pr-explore-sandbox
 
-# Trusted-orchestrator workflow for PR exploration. It intentionally uses
-# pull_request_target so the workflow file and runner script come from the
-# protected base branch. The PR head is never checked out on the host runner;
-# the sandbox script fetches and executes it inside Docker.
+# Trusted-orchestrator workflow for manual PR exploration. Keep this dispatch
+# only while the self-hosted runner and approval flow are being stabilized, so
+# ordinary PRs do not accumulate waiting checks.
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "apps/web/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - ".github/workflows/agent-pr-explore-sandbox.yml"
-      - ".github/scripts/agent-pr-explore-sandbox.sh"
   workflow_dispatch:
     inputs:
       pr_number:
@@ -33,7 +23,6 @@ concurrency:
 jobs:
   sandbox:
     name: Sandbox PR runtime
-    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft }}
     runs-on: [self-hosted, agent-pr-explore]
     environment: agent-pr-explore
     timeout-minutes: 45
