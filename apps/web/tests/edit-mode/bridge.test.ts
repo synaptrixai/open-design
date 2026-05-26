@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import {
   buildManualEditBridge,
@@ -371,7 +371,7 @@ describe('manual edit bridge target normalization', () => {
     expect(bridge).toContain('makeInlineTextEditable(el, id, !!focus)');
     expect(bridge).toContain("ev.key === 'Enter' && !ev.shiftKey");
     expect(bridge).toContain("ev.key === 'Escape'");
-    expect(bridge).toContain('[data-od-editing-text]');
+    expect(bridge).toContain("el.setAttribute('data-od-editing-text', 'true')");
   });
 
   it('treats unknown data-od-edit values as text-editable by tag inference', () => {

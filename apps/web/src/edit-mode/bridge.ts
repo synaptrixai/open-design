@@ -605,10 +605,6 @@ export function buildManualEditBridge(enabled: boolean): string {
     var el = findById(activeTextEdit.id);
     if (!el || !isDirectTextEditable(el)) return;
     activeTextEdit.el = el;
-    if (document.activeElement === el) {
-      noteInlineTextInput(el);
-      return;
-    }
     if (typeof activeTextEdit.currentText !== 'string' || el.textContent === activeTextEdit.currentText) return;
     restoringInlineText = true;
     el.textContent = activeTextEdit.currentText;
@@ -782,6 +778,10 @@ export function buildManualEditBridge(enabled: boolean): string {
         preventDefault: function(){},
         stopPropagation: function(){}
       });
+      return;
+    }
+    if (ev.data.type === 'od-edit-text-commit-now') {
+      if (activeTextEdit) postInlineTextCommit(activeTextEdit);
       return;
     }
   });
