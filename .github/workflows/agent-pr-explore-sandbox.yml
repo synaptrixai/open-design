@@ -127,7 +127,12 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: agent-pr-explore-sandbox-${{ steps.pr.outputs.number }}-${{ steps.pr.outputs.head_sha }}
-          path: ${{ runner.temp }}/agent-pr-explore-sandbox/artifacts/
+          # The trace zips (~28MB) and videos are already published to R2; keep
+          # them out of the GitHub artifact so it stays small (report + logs).
+          path: |
+            ${{ runner.temp }}/agent-pr-explore-sandbox/artifacts/
+            !${{ runner.temp }}/agent-pr-explore-sandbox/artifacts/**/*.zip
+            !${{ runner.temp }}/agent-pr-explore-sandbox/artifacts/**/*.webm
           if-no-files-found: warn
           retention-days: 7
 

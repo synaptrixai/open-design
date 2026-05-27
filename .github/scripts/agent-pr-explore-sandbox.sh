@@ -52,6 +52,7 @@ context_file="$artifacts/pr-context.md"
 trimmed_context_file="$artifacts/pr-context-trimmed.md"
 changed_files_file="$artifacts/changed-files.txt"
 fixture_instructions_file="$artifacts/fixture-instructions.md"
+agent_report_file="$artifacts/agent-report.md"
 playwright_video_dir="$artifacts/playwright-video"
 rm -rf "$root"
 mkdir -p "$artifacts" "$pnpm_store" "$playwright_video_dir"
@@ -674,7 +675,6 @@ function writeTraceViewerFiles(viewerUrl) {
     ok: false,
     video: null,
     trace: "playwright-smoke-trace.zip",
-    legacyTrace: "playwright-trace.zip",
     traceViewerUrl: viewerUrl || null,
   };
 
@@ -686,19 +686,11 @@ function writeTraceViewerFiles(viewerUrl) {
     await context.close();
     await browser.close();
   }
-  const smokeTrace = path.join(artifacts, "playwright-smoke-trace.zip");
-  if (fs.existsSync(smokeTrace)) {
-    fs.copyFileSync(smokeTrace, path.join(artifacts, "playwright-trace.zip"));
-  }
-
   const videos = fs.readdirSync(videoDir).filter((name) => name.endsWith(".webm"));
   if (videos.length > 0) {
     const source = path.join(videoDir, videos[0]);
-    const stable = path.join(artifacts, "playwright-smoke-session.webm");
-    fs.copyFileSync(source, stable);
-    fs.copyFileSync(source, path.join(artifacts, "playwright-session.webm"));
+    fs.copyFileSync(source, path.join(artifacts, "playwright-smoke-session.webm"));
     summary.video = "playwright-smoke-session.webm";
-    summary.legacyVideo = "playwright-session.webm";
   }
   writeTraceViewerFiles(viewerUrl);
   fs.writeFileSync(path.join(artifacts, "playwright-recording-summary.json"), JSON.stringify(summary, null, 2));
@@ -847,9 +839,7 @@ async function putObject(filePath, key, contentType, cacheControl) {
   requireConfig();
   const files = [
     ["playwright-smoke-trace.zip", "application/zip", "public, max-age=604800"],
-    ["playwright-trace.zip", "application/zip", "public, max-age=604800"],
     ["playwright-smoke-session.webm", "video/webm", "public, max-age=604800"],
-    ["playwright-session.webm", "video/webm", "public, max-age=604800"],
     ["playwright-initial.png", "image/png", "public, max-age=604800"],
     ["playwright-final.png", "image/png", "public, max-age=604800"],
     ["expect.log", "text/plain; charset=utf-8", "public, max-age=604800"],
@@ -913,12 +903,14 @@ write_agent_report_artifact() {
       echo "Trace artifact was not generated for this run."
     fi
     echo
-    if [ -f "$artifacts/expect.log" ]; then
-      cat "$artifacts/expect.log"
+    if [ -s "$agent_report_file" ]; then
+      # The agent wrote its clean Markdown report to this file directly.
+      cat "$agent_report_file"
     else
       echo "### ⚠️ Verdict: Inconclusive"
       echo
-      echo "The runner did not produce an exploration report."
+      echo "The agent did not write a final report (it may have hit the run"
+      echo "timeout before finishing). See the run log artifact / \`expect.log\` for details."
     fi
   } > "$artifacts/agent-pr-exploration-report.md"
 }
@@ -941,7 +933,23 @@ cat > "$artifacts/manifest.json" <<JSON
 }
 JSON
 
-gh pr diff "$PR_NUMBER" --repo "$BASE_REPO" --name-only > "$changed_files_file"
+# gh hits api.github.com under the hood; a single transient blip there
+# (timeout / 5xx) would otherwise abort the whole run before exploration.
+# Retry each read-only PR-context call, buffering its output to a file per
+# attempt (> truncates on open) so a partial/paginated failure cannot
+# duplicate output into the context the agent later reads.
+gh_retry_file() {
+  local out="$1"; shift
+  local attempt
+  for attempt in 1 2 3 4; do
+    if "$@" > "$out"; then return 0; fi
+    [ "$attempt" = 4 ] && return 1
+    echo "::warning::gh call failed (attempt ${attempt}/4): $* — retrying" >&2
+    sleep $((attempt * 4))
+  done
+}
+
+gh_retry_file "$changed_files_file" gh pr diff "$PR_NUMBER" --repo "$BASE_REPO" --name-only
 
 while IFS= read -r changed_path; do
   if is_app_surface_path "$changed_path"; then
@@ -959,6 +967,14 @@ echo "$agent_fixture" > "$artifacts/agent-fixture.txt"
 deterministic_verifier="$(select_deterministic_verifier)"
 echo "$deterministic_verifier" > "$artifacts/deterministic-verifier.txt"
 
+# Fetch PR body + patches to files first (buffered retry), then assemble the
+# context from the files so a retried/paginated call can never duplicate output.
+pr_body_file="$artifacts/pr-body.txt"
+gh_retry_file "$pr_body_file" gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json title,body --jq '"# " + .title + "\n\n" + (.body // "")'
+pr_patches_file="$artifacts/pr-patches.txt"
+gh_retry_file "$pr_patches_file" gh api --paginate "repos/${BASE_REPO}/pulls/${PR_NUMBER}/files" --jq \
+  '.[] | "### " + .filename + " (" + .status + ", +" + (.additions | tostring) + "/-" + (.deletions | tostring) + ")\n```diff\n" + (if .patch == null then "[binary or generated patch omitted]" else (.patch[0:'"$file_patch_max_chars"'] + (if (.patch | length) > '"$file_patch_max_chars"' then "\n[patch truncated]" else "" end)) end) + "\n```\n"'
+
 {
   echo "# PR #$PR_NUMBER context"
   echo
@@ -968,14 +984,13 @@ echo "$deterministic_verifier" > "$artifacts/deterministic-verifier.txt"
   echo "Head SHA: $HEAD_SHA"
   echo
   echo "## PR body"
-  gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json title,body --jq '"# " + .title + "\n\n" + (.body // "")'
+  cat "$pr_body_file"
   echo
   echo "## Changed files"
   cat "$changed_files_file"
   echo
   echo "## Text patches"
-  gh api --paginate "repos/${BASE_REPO}/pulls/${PR_NUMBER}/files" --jq \
-    '.[] | "### " + .filename + " (" + .status + ", +" + (.additions | tostring) + "/-" + (.deletions | tostring) + ")\n```diff\n" + (if .patch == null then "[binary or generated patch omitted]" else (.patch[0:'"$file_patch_max_chars"'] + (if (.patch | length) > '"$file_patch_max_chars"' then "\n[patch truncated]" else "" end)) end) + "\n```\n"'
+  cat "$pr_patches_file"
 } > "$context_file"
 head -c "$context_max_bytes" "$context_file" > "$trimmed_context_file"
 if [ "$(wc -c < "$context_file" | tr -d " ")" -gt "$context_max_bytes" ]; then
@@ -1181,7 +1196,7 @@ seed_agent_fixture "$agent_fixture"
 if [ "$deterministic_verifier" = "web-static-export" ] && [ "$browser_exploration_needed" != "true" ]; then
   verifier_status="$(cat "$artifacts/deterministic-verifier-exit-code.txt" 2>/dev/null || echo 1)"
   if [ "$verifier_status" = "0" ]; then
-    cat > "$artifacts/expect.log" <<REPORT
+    cat > "$agent_report_file" <<REPORT
 ### ✅ Verdict: Pass
 
 This PR changes the web deployment/static-export path rather than an interactive user flow. The agent therefore used the deterministic Docker verifier instead of inventing browser interaction cases that would not exercise the changed behavior.
@@ -1215,7 +1230,7 @@ Observed result:
 - A dedicated CI smoke for the Vercel/static-export command would make this regression class easier to catch without requiring agent exploration.
 REPORT
   else
-    cat > "$artifacts/expect.log" <<REPORT
+    cat > "$agent_report_file" <<REPORT
 ### ❌ Verdict: Fail
 
 The deterministic static-export verifier failed. Because this PR changes build/deploy output rather than an interactive browser flow, browser exploration would not be a useful substitute for the failing build-level signal.
@@ -1244,7 +1259,7 @@ REPORT
 fi
 
 if [ "$app_surface_touched" != "true" ]; then
-  cat > "$artifacts/expect.log" <<REPORT
+  cat > "$agent_report_file" <<REPORT
 ### ⚪ Verdict: Inconclusive
 
 This PR does not touch a path that the browser explorer can map to app UI/runtime behavior, so the run avoided inventing a broad app audit.
@@ -1263,7 +1278,7 @@ This PR does not touch a path that the browser explorer can map to app UI/runtim
 
 - None from this PR diff. Add deterministic checks when a future PR changes app/runtime behavior.
 REPORT
-  echo "No app/runtime surface touched; wrote inconclusive advisory report to $artifacts/expect.log"
+  echo "No app/runtime surface touched; wrote inconclusive advisory report to $agent_report_file"
   record_playwright_artifacts || true
   publish_trace_artifacts_to_r2 || true
   write_agent_report_artifact
@@ -1295,7 +1310,7 @@ Keep this as a fast exploratory pass:
 
 CRITICAL -- finish and submit promptly: the runner aborts this turn with NO report if you produce no output for about 3 minutes. Do not plan or attempt more steps than you will actually complete. As soon as you have verified 2-3 cases (or hit a blocker), stop exploring and emit the COMPLETE Markdown report below as your final message in a single turn. Never leave planned steps pending, retry silently, or run "just one more" check once you have enough to write the verdict.
 
-Return a reviewer-ready Markdown report fragment. Do not include the top-level title or trace section; the runner prepends the real trace link after artifacts are published.
+Write your final report as a reviewer-ready Markdown fragment to the file ${agent_report_file} using your file-write tool, as your final action. Do not print the report to stdout -- only write the file, then stop. Do not include the top-level title or trace section; the runner prepends the real trace link after artifacts are published.
 
 Use this structure and keep the writing concrete:
 
@@ -1311,7 +1326,7 @@ One short paragraph explaining the verdict in terms of the diff and observed beh
 
 ### 🧪 Cases Tested
 
-- Case name: what was exercised and why it matters.
+- Start every case bullet with a status emoji for its outcome -- ✅ pass, ❌ fail, ⚠️ warning, or ⚪ inconclusive -- followed by a bold case name, then what was exercised and why it matters. Example: "- ✅ **Empty-state CTA opens modal**: clicked the new CTA on /projects and the existing dialog opened in place."
 - Include at least two distinct UI/runtime cases for UI/runtime diffs unless setup is blocked or the changed surface is unreachable.
 
 ### 🔍 Concrete Evidence
@@ -1369,3 +1384,14 @@ publish_trace_artifacts_to_r2 || true
 write_agent_report_artifact
 
 docker logs "$container_name" > "$artifacts/docker.log" 2>&1 || true
+
+# Persist the report + trace pointer to a stable host dir so dry/validation runs
+# (skip_comment) can be inspected without downloading the slow, large workflow
+# artifact. Overwrites per PR; the big trace zip stays on R2 only.
+report_persist_dir="${OD_SANDBOX_REPORT_DIR:-$HOME/.cache/agent-pr-explore/reports}/pr-${PR_NUMBER}"
+mkdir -p "$report_persist_dir" 2>/dev/null || true
+cp -f "$artifacts/agent-pr-exploration-report.md" "$report_persist_dir/report.md" 2>/dev/null || true
+cp -f "$artifacts/agent-report.md" "$report_persist_dir/agent-report.md" 2>/dev/null || true
+cp -f "$artifacts/expect.log" "$report_persist_dir/expect.log" 2>/dev/null || true
+cp -f "$artifacts/playwright-trace-viewer.txt" "$report_persist_dir/trace-url.txt" 2>/dev/null || true
+echo "Report persisted on runner: $report_persist_dir"

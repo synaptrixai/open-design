@@ -45,7 +45,8 @@ export interface HeaderProps {
     | 'templates'
     | 'craft'
     | 'blog'
-    | 'tutorials';
+    | 'tutorials'
+    | 'community';
   /**
    * Live counts from the Markdown catalogs. Required so we can never
    * silently render stale fallback numbers when a caller forgets to
@@ -245,6 +246,23 @@ export function Header({
             <li>
               <a href={href('/blog/')} className={linkClass('blog')}>
                 {headerCopy.nav.blog}
+              </a>
+            </li>
+            {/*
+              Community is a static contributors / ambassadors page served
+              from `apps/landing-page/public/community/index.html` — Astro
+              copies `public/` verbatim, so this hits Cloudflare Pages as a
+              first-party route at `/community/`.
+
+              The href is the literal `/community/` rather than
+              `href('/community/')` because the page is a single non-
+              locale-aware destination — locale-prefixed variants like
+              `/zh/community/` would fall through to a 404 since the
+              `[locale]/[...path].astro` catch-all does not generate it.
+            */}
+            <li>
+              <a href='/community/' className={linkClass('community')}>
+                {headerCopy.nav.community}
               </a>
             </li>
             {/*
