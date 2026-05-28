@@ -499,6 +499,25 @@ const AGENT_CLI_ENV_FIELDS = [
     placeholder: 'Paste OPENAI_API_KEY',
     secret: true,
   },
+  {
+    agentId: 'spilli',
+    envKey: 'SPILLI_KEY_PATH',
+    labelKey: 'settings.cliEnvSpilliKeyPath',
+    placeholder: '/absolute/path/to/key.pem',
+  },
+  {
+    agentId: 'spilli',
+    envKey: 'SPILLI_SCOPE',
+    labelKey: 'settings.cliEnvSpilliScope',
+    placeholder: 'public',
+    options: ['public', 'private', 'team'],
+  },
+  {
+    agentId: 'spilli',
+    envKey: 'SPILLI_TEAM',
+    labelKey: 'settings.cliEnvSpilliTeam',
+    placeholder: 'team-name',
+  },
 ] as const;
 
 function defaultApiProtocolConfig(protocol: ApiProtocol): ApiProtocolConfig {
@@ -2866,31 +2885,58 @@ export function SettingsDialog({
                                 ? ` (${field.labelSuffix})`
                                 : ''}
                             </span>
-                            <input
-                              type={
-                                'secret' in field && field.secret
-                                  ? 'password'
-                                  : 'text'
-                              }
-                              value={
-                                cfg.agentCliEnv?.[field.agentId]?.[
-                                  field.envKey
-                                ] ?? ''
-                              }
-                              placeholder={field.placeholder}
-                              spellCheck={false}
-                              autoComplete="off"
-                              onChange={(e) =>
-                                setCfg((c) =>
-                                  updateAgentCliEnvValue(
-                                    c,
-                                    field.agentId,
-                                    field.envKey,
-                                    e.target.value,
-                                  ),
-                                )
-                              }
-                            />
+                            {'options' in field ? (
+                              <select
+                                value={
+                                  cfg.agentCliEnv?.[field.agentId]?.[
+                                    field.envKey
+                                  ] ?? ''
+                                }
+                                onChange={(e) =>
+                                  setCfg((c) =>
+                                    updateAgentCliEnvValue(
+                                      c,
+                                      field.agentId,
+                                      field.envKey,
+                                      e.target.value,
+                                    ),
+                                  )
+                                }
+                              >
+                                <option value="">{field.placeholder}</option>
+                                {field.options.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type={
+                                  'secret' in field && field.secret
+                                    ? 'password'
+                                    : 'text'
+                                }
+                                value={
+                                  cfg.agentCliEnv?.[field.agentId]?.[
+                                    field.envKey
+                                  ] ?? ''
+                                }
+                                placeholder={field.placeholder}
+                                spellCheck={false}
+                                autoComplete="off"
+                                onChange={(e) =>
+                                  setCfg((c) =>
+                                    updateAgentCliEnvValue(
+                                      c,
+                                      field.agentId,
+                                      field.envKey,
+                                      e.target.value,
+                                    ),
+                                  )
+                                }
+                              />
+                            )}
                           </label>
                         ))}
                       </div>

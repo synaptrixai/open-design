@@ -158,6 +158,7 @@ const AGENT_CLI_ENV_KEYS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['pi', new Set(['PI_BIN'])],
   ['qoder', new Set(['QODER_BIN'])],
   ['qwen', new Set(['QWEN_BIN'])],
+  ['spilli', new Set(['SPILLI_KEY_PATH', 'SPILLI_SCOPE', 'SPILLI_TEAM'])],
   ['trae-cli', new Set(['TRAE_CLI_BIN'])],
   ['vibe', new Set(['VIBE_BIN'])],
 ]);
@@ -203,6 +204,15 @@ export function validateAgentCliEnv(raw: unknown): AgentCliEnvPrefs | undefined 
       if (typeof envValue !== 'string') continue;
       const trimmed = envValue.trim();
       if (!trimmed) continue;
+      if (
+        agentId === 'spilli' &&
+        envKey === 'SPILLI_SCOPE' &&
+        trimmed !== 'public' &&
+        trimmed !== 'private' &&
+        trimmed !== 'team'
+      ) {
+        continue;
+      }
       env[envKey] = trimmed;
     }
     if (Object.keys(env).length > 0) result[agentId] = env;
@@ -354,6 +364,25 @@ function applyTelemetryDefaults(prefs: AppConfigPrefs): AppConfigPrefs {
   return prefs;
 }
 
+function applySpilliEnvDefaults(prefs: AppConfigPrefs): AppConfigPrefs {
+  const keyPath = process.env.OD_DEFAULT_SPILLI_KEY_PATH?.trim();
+  if (!keyPath || prefs.agentCliEnv?.spilli?.SPILLI_KEY_PATH) return prefs;
+  return {
+    ...prefs,
+    agentCliEnv: {
+      ...(prefs.agentCliEnv ?? {}),
+      spilli: {
+        ...(prefs.agentCliEnv?.spilli ?? {}),
+        SPILLI_KEY_PATH: keyPath,
+      },
+    },
+  };
+}
+
+function applyReadDefaults(prefs: AppConfigPrefs): AppConfigPrefs {
+  return applySpilliEnvDefaults(applyTelemetryDefaults(prefs));
+}
+
 export async function readAppConfig(dataDir: string): Promise<AppConfigPrefs> {
   const base = await readAppConfigFileOnly(dataDir);
   // Channel-root installation file is the new authoritative source for the
@@ -370,7 +399,7 @@ export async function readAppConfig(dataDir: string): Promise<AppConfigPrefs> {
   const installationDir = resolveInstallationDir(dataDir);
   const installation = await readInstallationFile(installationDir);
   if (typeof installation.installationId === 'string' && installation.installationId.length > 0) {
-    return applyTelemetryDefaults({ ...base, installationId: installation.installationId });
+    return applyReadDefaults({ ...base, installationId: installation.installationId });
   }
   if (typeof base.installationId === 'string' && base.installationId.length > 0) {
     // Best-effort migration. A write failure here doesn't break the read —
@@ -382,7 +411,7 @@ export async function readAppConfig(dataDir: string): Promise<AppConfigPrefs> {
       // swallow — observability beats correctness on this path
     }
   }
-  return applyTelemetryDefaults(base);
+  return applyReadDefaults(base);
 }
 
 async function readAppConfigFileOnly(dataDir: string): Promise<AppConfigPrefs> {

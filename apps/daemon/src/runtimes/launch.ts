@@ -1,5 +1,6 @@
-import { accessSync, constants, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path, { delimiter } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { inspectAgentExecutableResolution } from './executables.js';
 import type { RuntimeAgentDef } from './types.js';
 
@@ -16,6 +17,18 @@ export function resolveAgentLaunch(
   def: RuntimeAgentDef,
   configuredEnv: Record<string, string> = {},
 ): AgentLaunchResolution {
+  if (def.internalNodeEntrypoint) {
+    const internal = resolveInternalNodeEntrypoint(def.internalNodeEntrypoint);
+    return {
+      configuredOverridePath: null,
+      pathResolvedPath: internal,
+      selectedPath: internal,
+      launchPath: internal ? process.execPath : null,
+      launchKind: 'selected',
+      childPathPrepend: [],
+      diagnostic: internal ? null : `Internal agent entrypoint was not found: ${def.internalNodeEntrypoint}`,
+    };
+  }
   const resolution = inspectAgentExecutableResolution(def, configuredEnv);
   if (!resolution.selectedPath) {
     return { ...resolution, launchPath: null, launchKind: 'selected', childPathPrepend: [], diagnostic: null };
@@ -34,6 +47,25 @@ export function resolveAgentLaunch(
     childPathPrepend: [...childPathPrepend, ...native.childPathPrepend],
     diagnostic: native.diagnostic,
   };
+}
+
+export function resolveInternalNodeEntrypoint(entrypoint: string): string | null {
+  if (
+    !entrypoint ||
+    entrypoint.includes('\0') ||
+    path.isAbsolute(entrypoint) ||
+    entrypoint.split(/[\\/]+/u).includes('..')
+  ) {
+    return null;
+  }
+  const base = path.dirname(fileURLToPath(import.meta.url));
+  const jsCandidate = path.resolve(base, entrypoint);
+  if (existsSync(jsCandidate)) return jsCandidate;
+  if (jsCandidate.endsWith('.js')) {
+    const tsCandidate = `${jsCandidate.slice(0, -3)}.ts`;
+    if (existsSync(tsCandidate)) return tsCandidate;
+  }
+  return null;
 }
 
 export function applyAgentLaunchEnv(

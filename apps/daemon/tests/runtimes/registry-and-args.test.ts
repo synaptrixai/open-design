@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 import {
-  AGENT_DEFS, assert, chmodSync, codex, cursorAgent, detectAgents, join, mkdtempSync, rmSync, tmpdir, withEnvSnapshot, withPlatform, writeFileSync,
+  AGENT_DEFS, assert, chmodSync, codex, cursorAgent, detectAgents, join, mkdtempSync, rmSync, spilli, tmpdir, withEnvSnapshot, withPlatform, writeFileSync,
 } from './helpers/test-helpers.js';
 import { readLocalAgentProfileDefs } from '../../src/runtimes/registry.js';
 
@@ -8,6 +8,47 @@ test('AGENT_DEFS ids are unique', () => {
   const ids = AGENT_DEFS.map((a) => a.id);
   const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
   assert.deepEqual(dupes, [], `duplicate agent ids: ${JSON.stringify(dupes)}`);
+});
+
+test('spilli runtime launches the bundled Node runner and preserves static model hints', async () => {
+  const args = spilli.buildArgs('', [], [], { model: 'gpt-oss-20b' }, { cwd: '/tmp/od-project' });
+
+  assert.equal(spilli.internalNodeEntrypoint, 'spilli-runner.js');
+  assert.equal(spilli.promptViaStdin, true);
+  assert.equal(spilli.streamFormat, 'json-event-stream');
+  assert.equal(spilli.eventParser, 'spilli');
+  assert.ok(args[0]?.endsWith('spilli-runner.js'));
+  assert.deepEqual(args.slice(1), ['--model', 'gpt-oss-20b', '--cwd', '/tmp/od-project']);
+  assert.deepEqual(spilli.fallbackModels.map((model) => model.id), [
+    'default',
+    'gpt-oss-20b',
+  ]);
+});
+
+test('spilli detection uses the internal runner and reports missing pem auth', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'od-agents-spilli-'));
+  try {
+    await withEnvSnapshot(['OD_AGENT_HOME', 'PATH'], async () => {
+      process.env.OD_AGENT_HOME = dir;
+      process.env.PATH = dir;
+
+      const agents = await detectAgents({
+        spilli: {},
+      });
+      const detected = agents.find((agent) => agent.id === 'spilli');
+
+      assert.ok(detected);
+      assert.equal(detected.available, true);
+      assert.equal(detected.authStatus, 'missing');
+      assert.equal(detected.modelsSource, 'fallback');
+      assert.deepEqual(detected.models.map((model: { id: string }) => model.id), [
+        'default',
+        'gpt-oss-20b',
+      ]);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('local agent profiles inherit a base adapter and can pin the default model', async () => {

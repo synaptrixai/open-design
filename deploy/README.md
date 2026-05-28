@@ -58,6 +58,69 @@ The image intentionally does not bundle Claude/Codex/Gemini CLI binaries. Keep
 those outside the image, or build a separate private runtime layer if a server
 deployment needs local code-agent CLIs installed in the container.
 
+<<<<<<< Updated upstream
+=======
+## Local compose with Codex CLI
+
+`Dockerfile.codex` is a private-runtime variant of the standard image that also
+installs the OpenAI Codex CLI. It sets `CODEX_HOME=/home/open-design/.codex` so a
+Compose volume can persist ChatGPT/device-code authentication across container
+recreates.
+
+The Codex compose file is local-only by default. Open Design binds to loopback
+inside the container and `socat` publishes that listener to Docker's port mapper,
+which avoids the hosted-mode `OD_API_TOKEN` guard while keeping the host publish
+bound to `127.0.0.1`. Do not adapt this proxy pattern for a public interface
+without adding an authenticated reverse proxy or changing the deployment to use
+`OD_BIND_HOST=0.0.0.0` with a generated `OD_API_TOKEN`.
+
+Project files are bind-mounted from `OPEN_DESIGN_PROJECTS_DIR` in `deploy/.env`
+and appear as `/app/.od/projects` in the container. Copy `.env.example` to
+`.env` and set `OPEN_DESIGN_PROJECTS_DIR=../../../openDesign/OD_workspace` or
+another host path before starting the Codex compose variant. The entrypoint runs
+Open Design and Codex as `OPEN_DESIGN_UID:OPEN_DESIGN_GID` (default `1000:1000`)
+so generated files remain editable from the host. Override those values if your
+local user has a different UID or GID.
+
+The Codex compose variant also bind-mounts `SPILLI_PEM_HOST_PATH` (default
+`${HOME}/.spilli/SpiLLI_Enterprise.pem`) read-only to
+`/run/secrets/spilli/SpiLLI_Enterprise.pem`. Open Design uses that container
+path as the default SpiLLI `.pem` setting until the user saves a different path.
+
+This compose variant defaults `OD_CODEX_SANDBOX=danger-full-access` because
+Codex's Linux `workspace-write` sandbox can reject shell execution from inside a
+nested Docker runtime. The host publish remains bound to `127.0.0.1`; treat this
+as a trusted local agent container, not a public deployment profile.
+
+Start Open Design with Codex available on `PATH`:
+
+```bash
+cd deploy
+docker compose -f docker-compose.codex.yml up -d --build open-design
+```
+
+Authenticate Codex in the persisted `codex_home` volume:
+
+```bash
+docker compose -f docker-compose.codex.yml run --rm codex-login
+```
+
+The login helper runs `codex login --device-auth`; follow the printed device-code
+URL in your browser. You can confirm the saved auth state with:
+
+```bash
+docker compose -f docker-compose.codex.yml run --rm codex-status
+```
+
+Useful overrides:
+
+```bash
+CODEX_VERSION=0.131.0 docker compose -f docker-compose.codex.yml build
+OPEN_DESIGN_PORT=8080 docker compose -f docker-compose.codex.yml up -d open-design
+OPEN_DESIGN_UID=$(id -u) OPEN_DESIGN_GID=$(id -g) docker compose -f docker-compose.codex.yml up -d open-design
+```
+
+>>>>>>> Stashed changes
 ## Publish to Docker Hub
 
 ```bash

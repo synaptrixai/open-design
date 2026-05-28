@@ -1,3 +1,6 @@
+import { accessSync, constants, statSync } from 'node:fs';
+import path from 'node:path';
+
 import { execAgentFile } from './invocation.js';
 import type { RuntimeEnv } from './types.js';
 
@@ -22,12 +25,19 @@ const CURSOR_AUTH_GUIDANCE =
 const DEEPSEEK_AUTH_GUIDANCE =
   'DeepSeek TUI is installed but is not authenticated. Add or verify your API key in `~/.deepseek/config.toml` as `api_key = "..."`, or expose DEEPSEEK_API_KEY to the Open Design daemon process, then retry. If Open Design is launched outside an interactive shell, shell rc files such as ~/.zshrc may not be loaded.';
 
+const SPILLI_AUTH_GUIDANCE =
+  'SpiLLI requires a readable .pem key file. Configure SPILLI_KEY_PATH in Open Design Settings or run `od agent spilli configure --pem-path <path>`.';
+
 export function cursorAuthGuidance(): string {
   return CURSOR_AUTH_GUIDANCE;
 }
 
 export function deepseekAuthGuidance(): string {
   return DEEPSEEK_AUTH_GUIDANCE;
+}
+
+export function spilliAuthGuidance(): string {
+  return SPILLI_AUTH_GUIDANCE;
 }
 
 export function isCursorAuthFailureText(text: string): boolean {
@@ -73,6 +83,13 @@ export function classifyAgentAuthFailure(
       message: deepseekAuthGuidance(),
     };
   }
+  if (agentId === 'spilli') {
+    if (!/SPILLI_KEY_PATH|\.pem|SpiLLI requires a readable/i.test(text)) return null;
+    return {
+      status: 'missing',
+      message: spilliAuthGuidance(),
+    };
+  }
   return null;
 }
 
@@ -105,6 +122,25 @@ export async function probeAgentAuthStatus(
   resolvedBin: string,
   env: RuntimeEnv,
 ): Promise<AgentAuthProbeResult | null> {
+  if (agentId === 'spilli') {
+    const raw = typeof env.SPILLI_KEY_PATH === 'string' ? env.SPILLI_KEY_PATH.trim() : '';
+    if (!raw) {
+      return { status: 'missing', message: spilliAuthGuidance() };
+    }
+    try {
+      const keyPath = path.resolve(raw);
+      if (!keyPath.toLowerCase().endsWith('.pem')) {
+        return { status: 'missing', message: spilliAuthGuidance() };
+      }
+      if (!statSync(keyPath).isFile()) {
+        return { status: 'missing', message: spilliAuthGuidance() };
+      }
+      accessSync(keyPath, constants.R_OK);
+      return { status: 'ok' };
+    } catch {
+      return { status: 'missing', message: spilliAuthGuidance() };
+    }
+  }
   if (agentId !== 'cursor-agent') return null;
   try {
     const { stdout, stderr } = await execAgentFile(resolvedBin, ['status'], {

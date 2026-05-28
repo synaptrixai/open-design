@@ -40,6 +40,13 @@ export type RuntimeAgentDef = {
   id: string;
   name: string;
   bin: string;
+  /**
+   * Internal Node entrypoint, relative to `apps/daemon/src/runtimes` in
+   * source and `apps/daemon/dist/runtimes` after build. When set, the daemon
+   * launches `process.execPath` instead of resolving `bin` on PATH and passes
+   * this entrypoint as the first argv item from `buildArgs`.
+   */
+  internalNodeEntrypoint?: string;
   versionArgs: string[];
   fallbackModels: RuntimeModelOption[];
   buildArgs: (
@@ -114,6 +121,7 @@ export type DetectedAgent = Omit<
   | 'fallbackBins'
   | 'versionProbeTimeoutMs'
   | 'maxPromptArgBytes'
+  | 'internalNodeEntrypoint'
   | 'env'
 > & {
   models: RuntimeModelOption[];

@@ -1,5 +1,6 @@
 ARG NODE_IMAGE=docker.io/library/node:24-trixie-slim
 ARG RUNTIME_IMAGE=docker.io/library/node:24-trixie-slim
+ARG CODEX_VERSION=latest
 
 FROM ${NODE_IMAGE} AS build
 
@@ -35,6 +36,7 @@ RUN corepack enable && \
     pnpm install --frozen-lockfile
 
 COPY apps ./apps
+RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @open-design/daemon build && \
     pnpm --filter @open-design/web build && \
     pnpm --filter @open-design/daemon deploy --legacy --prod /app/deploy/daemon && \
@@ -70,11 +72,17 @@ RUN pnpm --filter @open-design/daemon build && \
 
 FROM ${RUNTIME_IMAGE}
 
+ARG CODEX_VERSION
+
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends tini poppler-utils ca-certificates libcurl4 && \
+    apt-get install -y --no-install-recommends \
+      tini poppler-utils git socat gosu bash ripgrep python3 make g++ coreutils ca-certificates libcurl4 && \
     rm -rf /var/lib/apt/lists/* && \
+    npm i -g "@openai/codex@${CODEX_VERSION}" && \
+    mv /usr/local/bin/codex /usr/local/bin/codex-real && \
+    npm cache clean --force && \
     groupadd --gid 1001 open-design && \
-    useradd --uid 1001 --gid open-design --no-create-home --shell /usr/sbin/nologin open-design
+    useradd --uid 1001 --gid open-design --create-home --home-dir /home/open-design --shell /bin/sh open-design
 
 WORKDIR /app
 COPY --from=build --chown=open-design:open-design /app/deploy/daemon ./apps/daemon
@@ -85,6 +93,8 @@ COPY --chown=open-design:open-design craft ./craft
 COPY --chown=open-design:open-design prompt-templates ./prompt-templates
 COPY --chown=open-design:open-design assets/frames ./assets/frames
 COPY --chown=open-design:open-design assets/community-pets ./assets/community-pets
+COPY --chown=open-design:open-design deploy/codex-entrypoint.sh ./codex-entrypoint.sh
+COPY deploy/codex-wrapper.sh /usr/local/bin/codex
 # Plan §3.J4 / spec §23.3.5 — bundled atom plugins registered on
 # daemon boot. The directory contains `plugins/_official/atoms/<atom>/`
 # pairs (SKILL.md + open-design.json); registerBundledPlugins() walks
@@ -92,16 +102,19 @@ COPY --chown=open-design:open-design assets/community-pets ./assets/community-pe
 # via the same registry path third-party plugins use.
 COPY --chown=open-design:open-design plugins/_official ./plugins/_official
 
-RUN mkdir -p /app/.od && \
-    chown -R open-design:open-design /app
+RUN chmod 755 /app/codex-entrypoint.sh /usr/local/bin/codex && \
+    mkdir -p /app/.od /home/open-design/.codex /run/secrets/spilli && \
+    chown -R open-design:open-design /app /home/open-design
 
 ENV NODE_ENV=production
 ENV NODE_OPTIONS=--max-old-space-size=192
 ENV OD_BIND_HOST=0.0.0.0
 ENV OD_PORT=7456
+ENV HOME=/home/open-design
+ENV CODEX_HOME=/home/open-design/.codex
+ENV OD_CODEX_SANDBOX=danger-full-access
 
 EXPOSE 7456
 
-USER open-design
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "apps/daemon/dist/cli.js", "--no-open"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/codex-entrypoint.sh"]
+CMD ["open-design"]

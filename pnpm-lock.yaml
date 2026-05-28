@@ -70,6 +70,9 @@ importers:
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1
+      '@synaptrix/spilli':
+        specifier: 0.4.4
+        version: 0.4.4
       better-sqlite3:
         specifier: 12.10.0
         version: 12.10.0
@@ -1858,6 +1861,20 @@ packages:
 
   '@swc/helpers@0.5.15':
     resolution: {integrity: sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==}
+
+  '@synaptrix/spilli-darwin-x64@0.4.4':
+    resolution: {integrity: sha512-fpvwDg/jLnzHV11cMfpuGMksKg0ZYtJW8eXTskNM+Xup4IuJpfX5Uwq9Z9VbudRyvBywpn/B5RYMQxxhkJZaLQ==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@synaptrix/spilli-linux-x64@0.4.4':
+    resolution: {integrity: sha512-0rS3KZjm7RDiM3npg8HgRgaGopAza2SNkjySQpQxMXLkSHek/wsd7YPXWCH3IXraIT58R2sLY1oCHE+NKRnbEw==}
+
+  '@synaptrix/spilli-win32-x64@0.4.4':
+    resolution: {integrity: sha512-RExNqetNKuzHiegKjxIQ5b6/PH4AFu0ehMGJE4pBGxt/D9tJoPKW3aYgpP0Ou2bsL1CHcB6iQAyZtMMM3I5r8g==}
+
+  '@synaptrix/spilli@0.4.4':
+    resolution: {integrity: sha512-i1fEGNf7lmkyWtiQ+k3BxiaQW8g3bWQypwucMvj8rEuxi3Yc9iHLUqQGWoxQKxToW7WiPFuUwtB8d90gwiRxag==}
 
   '@szmarczak/http-timer@4.0.6':
     resolution: {integrity: sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==}
@@ -6205,6 +6222,21 @@ snapshots:
   '@swc/helpers@0.5.15':
     dependencies:
       tslib: 2.8.1
+
+  '@synaptrix/spilli-darwin-x64@0.4.4':
+    optional: true
+
+  '@synaptrix/spilli-linux-x64@0.4.4':
+    optional: true
+
+  '@synaptrix/spilli-win32-x64@0.4.4':
+    optional: true
+
+  '@synaptrix/spilli@0.4.4':
+    optionalDependencies:
+      '@synaptrix/spilli-darwin-x64': 0.4.4
+      '@synaptrix/spilli-linux-x64': 0.4.4
+      '@synaptrix/spilli-win32-x64': 0.4.4
 
   '@szmarczak/http-timer@4.0.6':
     dependencies:

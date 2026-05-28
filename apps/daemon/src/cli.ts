@@ -227,6 +227,7 @@ const SUBCOMMAND_MAP = {
   status: runStatus,
   version: runVersion,
   doctor: runDoctor,
+  agent: runAgent,
   config: runConfig,
 };
 
@@ -5319,6 +5320,8 @@ async function runVersion(args) {
 
 const CONFIG_STRING_FLAGS = new Set(['daemon-url', 'value', 'value-json']);
 const CONFIG_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const AGENT_STRING_FLAGS = new Set(['daemon-url', 'pem-path', 'scope', 'team', 'model']);
+const AGENT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 
 async function runDoctor(args) {
   const flags = parseFlags(args, { string: CONFIG_STRING_FLAGS, boolean: CONFIG_BOOLEAN_FLAGS });
@@ -5427,6 +5430,114 @@ or the daemon cannot be reached.`);
   }
   const hasError = report.issues.some((i) => i.severity === 'error');
   process.exit(hasError ? 1 : 0);
+}
+
+async function runAgent(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od agent list [--json]              List available local agent runtimes.
+  od agent spilli configure --pem-path <path>
+                                      Configure SpiLLI .pem path.
+
+SpiLLI options:
+  --scope public|private|team
+  --team <name>
+  --model <id>
+
+Common options:
+  --daemon-url <url>   Open Design daemon HTTP base.
+  --json               Emit raw JSON.`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+
+  const sub = args[0];
+  const rest = args.slice(1);
+  const flags = parseFlags(rest, { string: AGENT_STRING_FLAGS, boolean: AGENT_BOOLEAN_FLAGS });
+  const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
+
+  const fetchConfig = async () => {
+    const resp = await fetch(`${base}/api/app-config`);
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    return data?.config ?? {};
+  };
+  const writeConfig = async (next) => {
+    const resp = await fetch(`${base}/api/app-config`, {
+      method:  'PUT',
+      headers: { 'content-type': 'application/json' },
+      body:    JSON.stringify(next),
+    });
+    if (!resp.ok) return structuredHttpFailure(resp);
+    return (await resp.json())?.config ?? next;
+  };
+
+  if (sub === 'list') {
+    const resp = await fetch(`${base}/api/agents`);
+    if (!resp.ok) {
+      const failure = await structuredHttpFailure(resp);
+      if (flags.json) {
+        process.stdout.write(JSON.stringify(failure, null, 2) + '\n');
+      } else {
+        console.error(`[agent] list failed: HTTP ${resp.status}`);
+      }
+      process.exit(1);
+    }
+    const data = await resp.json();
+    if (flags.json) {
+      process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    } else {
+      for (const agent of data?.agents ?? []) {
+        console.log(`${agent.available ? '✓' : '-'} ${agent.id}\t${agent.name}`);
+      }
+    }
+    return;
+  }
+
+  if (sub === 'spilli' && rest[0] === 'configure') {
+    const pemPath = typeof flags['pem-path'] === 'string' ? flags['pem-path'].trim() : '';
+    if (!pemPath) {
+      console.error('Usage: od agent spilli configure --pem-path <path> [--scope public|private|team] [--team <name>] [--model <id>]');
+      process.exit(2);
+    }
+    const scope = typeof flags.scope === 'string' && ['public', 'private', 'team'].includes(flags.scope)
+      ? flags.scope
+      : 'public';
+    const cfg = await fetchConfig();
+    const agentCliEnv = { ...(cfg.agentCliEnv ?? {}) };
+    const spilliEnv = {
+      ...(agentCliEnv.spilli ?? {}),
+      SPILLI_KEY_PATH: pemPath,
+      SPILLI_SCOPE: scope,
+    };
+    if (typeof flags.team === 'string' && flags.team.trim()) {
+      spilliEnv.SPILLI_TEAM = flags.team.trim();
+    } else if (scope !== 'team') {
+      delete spilliEnv.SPILLI_TEAM;
+    }
+    agentCliEnv.spilli = spilliEnv;
+
+    const next = {
+      ...cfg,
+      agentId: 'spilli',
+      agentCliEnv,
+    };
+    if (typeof flags.model === 'string' && flags.model.trim()) {
+      next.agentModels = {
+        ...(cfg.agentModels ?? {}),
+        spilli: { model: flags.model.trim() },
+      };
+    }
+    const written = await writeConfig(next);
+    if (flags.json) {
+      process.stdout.write(JSON.stringify(written, null, 2) + '\n');
+    } else {
+      console.log('[agent] configured spilli');
+    }
+    return;
+  }
+
+  console.error(`unknown subcommand: od agent ${args.join(' ')}`);
+  process.exit(2);
 }
 
 async function runConfig(args) {

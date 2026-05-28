@@ -449,6 +449,24 @@ if (obj.type === 'error') {
   return false;
 }
 
+function handleSpilliEvent(obj: unknown, onEvent: StreamEventHandler): boolean {
+  if (!isRecord(obj)) return false;
+  const type = typeof obj.type === 'string' ? obj.type : '';
+  if (
+    type === 'status' ||
+    type === 'text_delta' ||
+    type === 'thinking_delta' ||
+    type === 'tool_use' ||
+    type === 'tool_result' ||
+    type === 'usage' ||
+    type === 'error'
+  ) {
+    onEvent(obj);
+    return true;
+  }
+  return false;
+}
+
 export function createJsonEventStreamHandler(kind: ParserKind, onEvent: StreamEventHandler) {
   let buffer = '';
   const state: ParserState = {
@@ -473,6 +491,7 @@ export function createJsonEventStreamHandler(kind: ParserKind, onEvent: StreamEv
     if (kind === 'gemini' && handleGeminiEvent(obj, onEvent)) return;
     if (kind === 'cursor-agent' && handleCursorEvent(obj, onEvent, state)) return;
     if (kind === 'codex' && handleCodexEvent(obj, onEvent, state)) return;
+    if (kind === 'spilli' && handleSpilliEvent(obj, onEvent)) return;
 
     onEvent({ type: 'raw', line });
   }

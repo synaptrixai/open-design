@@ -28,14 +28,41 @@ const DEFAULT_TELEMETRY = {
   artifactManifest: false,
 } as const;
 
+async function withEnv<T>(
+  updates: Record<string, string | undefined>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const snapshot = new Map(Object.keys(updates).map((key) => [key, process.env[key]]));
+  try {
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    return await fn();
+  } finally {
+    for (const [key, value] of snapshot) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 describe('app-config', () => {
   let dataDir: string;
+  let originalDefaultSpilliKeyPath: string | undefined;
 
   beforeEach(async () => {
+    originalDefaultSpilliKeyPath = process.env.OD_DEFAULT_SPILLI_KEY_PATH;
+    delete process.env.OD_DEFAULT_SPILLI_KEY_PATH;
     dataDir = await mkdtemp(path.join(tmpdir(), 'od-appconfig-'));
   });
 
   afterEach(async () => {
+    if (originalDefaultSpilliKeyPath === undefined) {
+      delete process.env.OD_DEFAULT_SPILLI_KEY_PATH;
+    } else {
+      process.env.OD_DEFAULT_SPILLI_KEY_PATH = originalDefaultSpilliKeyPath;
+    }
     await rm(dataDir, { recursive: true, force: true });
   });
 
@@ -44,6 +71,43 @@ describe('app-config', () => {
       expect(await readAppConfig(dataDir)).toEqual({
         telemetry: DEFAULT_TELEMETRY,
       });
+    });
+
+    it('uses OD_DEFAULT_SPILLI_KEY_PATH as the default SpiLLI key path setting', async () => {
+      await withEnv(
+        { OD_DEFAULT_SPILLI_KEY_PATH: '  /run/secrets/spilli/SpiLLI_Enterprise.pem  ' },
+        async () => {
+          expect(await readAppConfig(dataDir)).toEqual({
+            agentCliEnv: {
+              spilli: {
+                SPILLI_KEY_PATH: '/run/secrets/spilli/SpiLLI_Enterprise.pem',
+              },
+            },
+            telemetry: DEFAULT_TELEMETRY,
+          });
+        },
+      );
+    });
+
+    it('does not overwrite a saved SpiLLI key path setting with the env default', async () => {
+      await writeFile(
+        path.join(dataDir, 'app-config.json'),
+        JSON.stringify({
+          agentCliEnv: {
+            spilli: {
+              SPILLI_KEY_PATH: '/custom/spilli.pem',
+            },
+          },
+        }),
+      );
+
+      await withEnv(
+        { OD_DEFAULT_SPILLI_KEY_PATH: '/run/secrets/spilli/SpiLLI_Enterprise.pem' },
+        async () => {
+          const cfg = await readAppConfig(dataDir);
+          expect(cfg.agentCliEnv?.spilli?.SPILLI_KEY_PATH).toBe('/custom/spilli.pem');
+        },
+      );
     });
 
     it('returns parsed config from existing file (with default telemetry)', async () => {
@@ -335,6 +399,47 @@ describe('app-config', () => {
         claude: { CLAUDE_CONFIG_DIR: '~/.claude-2', ANTHROPIC_API_KEY: 'sk-proxy-anthropic' },
         codex: { CODEX_HOME: '~/.codex-alt', CODEX_BIN: '~/bin/codex-next', OPENAI_API_KEY: 'sk-proxy-openai' },
         'trae-cli': { TRAE_CLI_BIN: '~/bin/traecli-public' },
+      });
+    });
+
+    it('persists SpiLLI key path and valid scope while dropping invalid scope values', async () => {
+      await writeAppConfig(dataDir, {
+        agentCliEnv: {
+          spilli: {
+            SPILLI_KEY_PATH: '  /tmp/spilli.pem  ',
+            SPILLI_SCOPE: 'team',
+            SPILLI_TEAM: '  design  ',
+            SPILLI_BIN: 'ignored',
+          },
+          badSpilli: {
+            SPILLI_KEY_PATH: '/tmp/other.pem',
+          },
+        },
+      });
+
+      let cfg = await readAppConfig(dataDir);
+      expect(cfg.agentCliEnv).toEqual({
+        spilli: {
+          SPILLI_KEY_PATH: '/tmp/spilli.pem',
+          SPILLI_SCOPE: 'team',
+          SPILLI_TEAM: 'design',
+        },
+      });
+
+      await writeAppConfig(dataDir, {
+        agentCliEnv: {
+          spilli: {
+            SPILLI_KEY_PATH: '/tmp/spilli.pem',
+            SPILLI_SCOPE: 'global',
+          },
+        },
+      });
+
+      cfg = await readAppConfig(dataDir);
+      expect(cfg.agentCliEnv).toEqual({
+        spilli: {
+          SPILLI_KEY_PATH: '/tmp/spilli.pem',
+        },
       });
     });
 

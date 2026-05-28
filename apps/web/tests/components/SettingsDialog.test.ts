@@ -346,6 +346,27 @@ describe('SettingsDialog agent CLI env settings', () => {
     });
   });
 
+  it('updates SpiLLI CLI env values without dropping sibling SpiLLI fields', () => {
+    const config: AppConfig = {
+      ...baseConfig,
+      mode: 'daemon',
+      agentCliEnv: {
+        spilli: { SPILLI_KEY_PATH: '/tmp/key.pem' },
+      },
+    };
+
+    const next = updateAgentCliEnvValue(
+      config,
+      'spilli',
+      'SPILLI_SCOPE',
+      'team',
+    );
+
+    expect(next.agentCliEnv).toEqual({
+      spilli: { SPILLI_KEY_PATH: '/tmp/key.pem', SPILLI_SCOPE: 'team' },
+    });
+  });
+
   it('removes empty per-agent CLI env entries', () => {
     const config: AppConfig = {
       ...baseConfig,
